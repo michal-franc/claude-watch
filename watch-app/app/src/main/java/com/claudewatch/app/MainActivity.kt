@@ -1,9 +1,12 @@
 package com.claudewatch.app
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
+import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -14,12 +17,15 @@ import android.widget.ImageButton
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.app.Activity
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.app.ActivityCompat
 import kotlinx.coroutines.*
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.asRequestBody
+import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 
@@ -28,6 +34,11 @@ class MainActivity : Activity() {
     companion object {
         private const val TAG = "ClaudeWatch"
         private const val PERMISSION_REQUEST_CODE = 1001
+        private const val NOTIFICATION_PERMISSION_CODE = 1002
+        private const val CHANNEL_ID = "claude_response"
+        private const val NOTIFICATION_ID = 1
+        private const val POLL_INTERVAL_MS = 5000L  // 5 seconds
+        private const val MAX_POLL_ATTEMPTS = 24     // 2 minutes max
     }
 
     private lateinit var recordButton: Button
@@ -63,8 +74,38 @@ class MainActivity : Activity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
 
+        createNotificationChannel()
+        requestNotificationPermission()
+
         // Auto-start recording on launch
         autoStartRecording()
+    }
+
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                    NOTIFICATION_PERMISSION_CODE
+                )
+            }
+        }
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val name = "Claude Responses"
+            val descriptionText = "Notifications for Claude responses"
+            val importance = NotificationManager.IMPORTANCE_HIGH
+            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
+                description = descriptionText
+                enableVibration(true)
+            }
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager.createNotificationChannel(channel)
+        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -206,23 +247,134 @@ class MainActivity : Activity() {
                 }
 
                 if (result.isSuccess) {
-                    showStatus("Sent successfully!")
+                    val responseBody = result.getOrNull() ?: ""
+                    try {
+                        val json = JSONObject(responseBody)
+                        val requestId = json.optString("request_id", "")
+                        val transcript = json.optString("transcript", "")
+
+                        if (requestId.isNotEmpty()) {
+                            showStatus("Waiting for Claude...")
+                            // Start polling for response
+                            pollForResponse(requestId)
+                        } else {
+                            showStatus("Sent: $transcript")
+                        }
+                    } catch (e: Exception) {
+                        showStatus("Sent successfully!")
+                    }
+
                     vibrate(50)
-                    // Cleanup the file after successful send
                     file.delete()
                     audioFile = null
                 } else {
                     showStatus("Failed: ${result.exceptionOrNull()?.message}", isError = true)
                     vibrate(longArrayOf(0, 100, 100, 100))
+                    progressBar.visibility = View.GONE
+                    recordButton.isEnabled = true
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending recording", e)
                 showStatus("Error: ${e.message}", isError = true)
                 vibrate(longArrayOf(0, 100, 100, 100))
-            } finally {
                 progressBar.visibility = View.GONE
                 recordButton.isEnabled = true
             }
+        }
+    }
+
+    private fun pollForResponse(requestId: String) {
+        coroutineScope.launch {
+            var attempts = 0
+            while (attempts < MAX_POLL_ATTEMPTS) {
+                delay(POLL_INTERVAL_MS)
+                attempts++
+
+                try {
+                    val result = withContext(Dispatchers.IO) {
+                        checkResponse(requestId)
+                    }
+
+                    if (result != null) {
+                        val status = result.optString("status", "")
+                        if (status == "completed") {
+                            val response = result.optString("response", "No response")
+                            val type = result.optString("type", "text")
+
+                            progressBar.visibility = View.GONE
+                            recordButton.isEnabled = true
+
+                            if (type == "text") {
+                                showNotification(response)
+                                showStatus("Response received!")
+                            } else {
+                                // TODO: Handle audio response
+                                showStatus("Audio response")
+                            }
+                            vibrate(longArrayOf(0, 100, 50, 100))
+                            return@launch
+                        } else if (status == "not_found") {
+                            Log.w(TAG, "Request not found on server")
+                            break
+                        }
+                        // status == "pending", continue polling
+                        showStatus("Waiting... (${attempts})")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error polling for response", e)
+                }
+            }
+
+            // Timeout or error
+            progressBar.visibility = View.GONE
+            recordButton.isEnabled = true
+            showStatus("Response timeout")
+        }
+    }
+
+    private fun checkResponse(requestId: String): JSONObject? {
+        return try {
+            val baseUrl = SettingsActivity.getServerUrl(this).replace("/transcribe", "")
+            val url = "$baseUrl/api/response/$requestId"
+
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+
+            if (response.isSuccessful) {
+                val body = response.body?.string() ?: "{}"
+                JSONObject(body)
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking response", e)
+            null
+        }
+    }
+
+    private fun showNotification(message: String) {
+        // Truncate for notification, full text will be in expanded view
+        val shortMessage = if (message.length > 100) message.take(100) + "..." else message
+
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Claude")
+            .setContentText(shortMessage)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setVibrate(longArrayOf(0, 200, 100, 200))
+
+        try {
+            NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, builder.build())
+        } catch (e: SecurityException) {
+            Log.e(TAG, "No notification permission", e)
+            // Show on screen instead
+            showStatus(shortMessage)
         }
     }
 

@@ -19,6 +19,8 @@ import sys
 import socket
 import select
 import subprocess
+import threading
+import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
 
@@ -53,6 +55,10 @@ CLAUDE_TMUX_SESSION = "claude-watch"
 request_history = []
 MAX_HISTORY = 100
 
+# Store responses from Claude (keyed by request ID)
+claude_responses = {}
+RESPONSE_TIMEOUT = 120  # seconds to keep response in memory
+
 # Transcription configuration (modifiable via API)
 transcription_config = {
     'model': 'nova-2',
@@ -61,10 +67,16 @@ transcription_config = {
     'punctuate': True
 }
 
+# Response configuration
+response_config = {
+    'mode': 'text',  # 'text' or 'audio'
+}
+
 # Available options for configuration
 CONFIG_OPTIONS = {
     'models': ['nova-2', 'nova', 'enhanced', 'base'],
-    'languages': ['en-US', 'pl']
+    'languages': ['en-US', 'pl'],
+    'response_modes': ['text', 'audio']
 }
 
 
@@ -152,16 +164,103 @@ def create_claude_tmux_session(text: str) -> bool:
         return False
 
 
-def run_claude(text: str):
+def capture_tmux_output() -> str:
+    """Capture current tmux pane content"""
+    try:
+        result = subprocess.run(
+            ['tmux', 'capture-pane', '-t', CLAUDE_TMUX_SESSION, '-p', '-S', '-100'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        return result.stdout if result.returncode == 0 else ""
+    except Exception as e:
+        print(f"[CAPTURE] Error capturing tmux output: {e}")
+        return ""
+
+
+def monitor_claude_response(request_id: str, initial_output: str):
+    """Background thread to monitor Claude's response"""
+    print(f"[MONITOR] Starting monitor for request {request_id}")
+
+    # Wait a bit for Claude to start processing
+    time.sleep(2)
+
+    last_output = initial_output
+    stable_count = 0
+    max_checks = 24  # 24 * 5s = 120 seconds max
+
+    for i in range(max_checks):
+        time.sleep(5)
+
+        current_output = capture_tmux_output()
+
+        # Check if output has changed
+        if current_output == last_output:
+            stable_count += 1
+            # If output hasn't changed for 3 checks (15s), assume Claude is done
+            if stable_count >= 3:
+                print(f"[MONITOR] Output stable for {request_id}, extracting response")
+                break
+        else:
+            stable_count = 0
+            last_output = current_output
+
+    # Extract the response (everything after the prompt)
+    response = extract_claude_response(initial_output, current_output)
+
+    claude_responses[request_id] = {
+        'status': 'completed',
+        'response': response,
+        'timestamp': datetime.now().isoformat()
+    }
+    print(f"[MONITOR] Response captured for {request_id}: {response[:100]}...")
+
+
+def extract_claude_response(before: str, after: str) -> str:
+    """Extract Claude's response by comparing before/after output"""
+    # Simple approach: get the new content
+    if not after:
+        return "No response captured"
+
+    # Find new content
+    before_lines = before.strip().split('\n') if before else []
+    after_lines = after.strip().split('\n')
+
+    # Get lines that are new
+    new_lines = []
+    for i, line in enumerate(after_lines):
+        if i >= len(before_lines) or line != before_lines[i]:
+            new_lines.append(line)
+
+    response = '\n'.join(new_lines).strip()
+
+    # Clean up common artifacts
+    if not response:
+        return "Response captured but empty"
+
+    return response
+
+
+def run_claude(text: str, request_id: str = None):
     """Send prompt to Claude via tmux session (creates if needed)"""
     global last_claude_launch
     now = time.time()
+
+    # Capture initial state before sending
+    initial_output = capture_tmux_output() if is_tmux_session_running() else ""
 
     # Check if tmux session exists
     if is_tmux_session_running():
         print(f"[CLAUDE] Reusing existing tmux session '{CLAUDE_TMUX_SESSION}'")
         if send_to_tmux_session(text):
             last_claude_launch = now
+            # Start monitoring for response
+            if request_id:
+                claude_responses[request_id] = {'status': 'pending', 'timestamp': datetime.now().isoformat()}
+                thread = threading.Thread(target=monitor_claude_response, args=(request_id, initial_output))
+                thread.daemon = True
+                thread.start()
             return True
         print("[CLAUDE] Failed to send to existing session")
 
@@ -171,7 +270,16 @@ def run_claude(text: str):
         return False
 
     last_claude_launch = now
-    return create_claude_tmux_session(text)
+    success = create_claude_tmux_session(text)
+
+    # Start monitoring for response
+    if success and request_id:
+        claude_responses[request_id] = {'status': 'pending', 'timestamp': datetime.now().isoformat()}
+        thread = threading.Thread(target=monitor_claude_response, args=(request_id, ""))
+        thread.daemon = True
+        thread.start()
+
+    return success
 
 
 class DictationHandler(BaseHTTPRequestHandler):
@@ -224,8 +332,10 @@ class DictationHandler(BaseHTTPRequestHandler):
         print(f"========================")
 
         received_at = datetime.now()
+        request_id = str(uuid.uuid4())[:8]  # Short unique ID
         entry = {
             'id': len(request_history) + 1,
+            'request_id': request_id,
             'timestamp': received_at.isoformat(),
             'content_type': content_type,
             'size_bytes': content_length,
@@ -274,7 +384,7 @@ class DictationHandler(BaseHTTPRequestHandler):
             # Step 4: Claude
             claude_at = datetime.now()
             if transcript:
-                launched = run_claude(transcript)
+                launched = run_claude(transcript, request_id)
                 entry['claude_launched'] = launched
                 entry['status'] = 'completed'
                 entry['steps'].append({
@@ -304,6 +414,7 @@ class DictationHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({
                 'status': 'ok',
+                'request_id': request_id,
                 'transcript': transcript or '',
                 'message': 'No speech detected' if not transcript else None
             }).encode())
@@ -348,6 +459,8 @@ class DictationHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({'status': 'ok'}).encode())
+        elif self.path.startswith('/api/response/'):
+            self.handle_response_check()
         elif self.path == '/api/history':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -429,6 +542,56 @@ class DictationHandler(BaseHTTPRequestHandler):
                 'status': 'error',
                 'message': f'Invalid JSON: {e}'
             }).encode())
+
+    def handle_response_check(self):
+        """Handle GET /api/response/<id> to check Claude's response"""
+        request_id = self.path.split('/')[-1]
+
+        if request_id not in claude_responses:
+            self.send_response(404)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                'status': 'not_found',
+                'message': 'Request ID not found'
+            }).encode())
+            return
+
+        response_data = claude_responses[request_id]
+
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+
+        if response_data['status'] == 'pending':
+            self.wfile.write(json.dumps({
+                'status': 'pending',
+                'message': 'Claude is still processing'
+            }).encode())
+        else:
+            # Response is ready
+            response_text = response_data.get('response', '')
+
+            # Check response mode
+            if response_config['mode'] == 'audio':
+                # TODO: Generate TTS audio
+                self.wfile.write(json.dumps({
+                    'status': 'completed',
+                    'type': 'audio',
+                    'response': response_text,
+                    'audio_url': None  # Would be URL to audio file
+                }).encode())
+            else:
+                self.wfile.write(json.dumps({
+                    'status': 'completed',
+                    'type': 'text',
+                    'response': response_text
+                }).encode())
+
+            # Clean up old response after delivery
+            # (keep for a bit in case of retries)
 
     def serve_dashboard(self):
         """Serve the Vue.js dashboard"""
