@@ -46,9 +46,8 @@ LAUNCH_COOLDOWN = 5  # seconds
 # Working directory for Claude (set via CLI argument)
 claude_workdir = None
 
-# Track the Claude process for reuse
-claude_process = None
-CLAUDE_WINDOW_TITLE = "claude-watch-session"
+# Track the Claude tmux session
+CLAUDE_TMUX_SESSION = "claude-watch"
 
 # Request history for dashboard
 request_history = []
@@ -90,86 +89,83 @@ def transcribe_audio(audio_data: bytes) -> str:
     return transcript
 
 
-def is_claude_running():
-    """Check if the tracked Claude process is still running"""
-    global claude_process
-    if claude_process is None:
-        return False
-    # Check if process is still alive
-    poll = claude_process.poll()
-    if poll is None:
-        return True
-    # Process has exited
-    claude_process = None
-    return False
+def is_tmux_session_running() -> bool:
+    """Check if the Claude tmux session exists"""
+    result = subprocess.run(
+        ['tmux', 'has-session', '-t', CLAUDE_TMUX_SESSION],
+        capture_output=True
+    )
+    return result.returncode == 0
 
 
-def send_to_existing_claude(text: str) -> bool:
-    """Send text to existing Claude window using xdotool"""
+def send_to_tmux_session(text: str) -> bool:
+    """Send text to existing Claude tmux session"""
     try:
-        # Find our specific Claude window by exact title
-        result = subprocess.run(
-            ['xdotool', 'search', '--name', f'^{CLAUDE_WINDOW_TITLE}$'],
-            capture_output=True,
-            text=True,
-            timeout=5
+        # Send the text followed by Enter
+        subprocess.run(
+            ['tmux', 'send-keys', '-t', CLAUDE_TMUX_SESSION, text, 'Enter'],
+            check=True,
+            timeout=10
         )
-        window_ids = result.stdout.strip().split('\n')
-        window_ids = [w for w in window_ids if w]
-
-        if not window_ids:
-            print(f"[CLAUDE] No window found with title '{CLAUDE_WINDOW_TITLE}'")
-            return False
-
-        window_id = window_ids[0]
-        print(f"[CLAUDE] Found claude-watch window: {window_id}")
-
-        # Type directly to window without focusing it
-        subprocess.run([
-            'xdotool', 'type', '--window', window_id, '--clearmodifiers', text
-        ], timeout=30)
-        subprocess.run([
-            'xdotool', 'key', '--window', window_id, 'Return'
-        ], timeout=5)
-
-        print(f"[CLAUDE] Sent prompt to window {window_id} (no focus change)")
+        print(f"[CLAUDE] Sent prompt to tmux session '{CLAUDE_TMUX_SESSION}'")
         return True
-
-    except subprocess.TimeoutExpired:
-        print("[CLAUDE] Timeout sending to existing window")
+    except subprocess.CalledProcessError as e:
+        print(f"[CLAUDE] Failed to send to tmux session: {e}")
         return False
-    except Exception as e:
-        print(f"[CLAUDE] Error sending to existing window: {e}")
+    except subprocess.TimeoutExpired:
+        print("[CLAUDE] Timeout sending to tmux session")
+        return False
+
+
+def create_claude_tmux_session(text: str) -> bool:
+    """Create a new tmux session with Claude"""
+    try:
+        # Create new tmux session running claude
+        subprocess.run([
+            'tmux', 'new-session',
+            '-d',  # detached
+            '-s', CLAUDE_TMUX_SESSION,
+            '-c', claude_workdir,
+            'claude', text
+        ], check=True, timeout=10)
+        print(f"[CLAUDE] Created tmux session '{CLAUDE_TMUX_SESSION}' in {claude_workdir}")
+
+        # Open alacritty attached to the session for visibility
+        subprocess.Popen([
+            'alacritty',
+            '--title', f'Claude ({CLAUDE_TMUX_SESSION})',
+            '-e', 'tmux', 'attach-session', '-t', CLAUDE_TMUX_SESSION
+        ])
+        print(f"[CLAUDE] Opened alacritty attached to tmux session")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"[CLAUDE] Failed to create tmux session: {e}")
+        return False
+    except subprocess.TimeoutExpired:
+        print("[CLAUDE] Timeout creating tmux session")
         return False
 
 
 def run_claude(text: str):
-    """Open Claude in alacritty terminal or send to existing instance"""
-    global last_claude_launch, claude_process
+    """Send prompt to Claude via tmux session (creates if needed)"""
+    global last_claude_launch
     now = time.time()
 
-    # Check if we can reuse existing Claude
-    if is_claude_running():
-        print("[CLAUDE] Attempting to reuse existing Claude instance")
-        if send_to_existing_claude(text):
+    # Check if tmux session exists
+    if is_tmux_session_running():
+        print(f"[CLAUDE] Reusing existing tmux session '{CLAUDE_TMUX_SESSION}'")
+        if send_to_tmux_session(text):
             last_claude_launch = now
             return True
-        print("[CLAUDE] Failed to reuse, will spawn new instance")
+        print("[CLAUDE] Failed to send to existing session")
 
-    # Cooldown only applies to spawning new instances
+    # Cooldown only applies to creating new sessions
     if now - last_claude_launch < LAUNCH_COOLDOWN:
         print(f"[GUARD] Skipping Claude launch - cooldown active ({LAUNCH_COOLDOWN}s)")
         return False
 
     last_claude_launch = now
-    claude_process = subprocess.Popen([
-        'alacritty',
-        '--title', CLAUDE_WINDOW_TITLE,
-        '--working-directory', claude_workdir,
-        '-e', 'claude', text
-    ])
-    print(f"[CLAUDE] Spawned new Claude instance (PID: {claude_process.pid}, title: {CLAUDE_WINDOW_TITLE})")
-    return True
+    return create_claude_tmux_session(text)
 
 
 class DictationHandler(BaseHTTPRequestHandler):
