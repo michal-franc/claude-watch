@@ -110,6 +110,19 @@
       font-size: 0.8rem;
       color: #666;
     }
+    .history-duration {
+      font-size: 0.75rem;
+      color: #4ade80;
+      background: #166534;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-left: 8px;
+    }
+    .step-duration {
+      font-size: 0.6rem;
+      color: #888;
+      margin-top: 2px;
+    }
     .empty-state {
       text-align: center;
       padding: 60px 20px;
@@ -472,7 +485,10 @@
       >
         <div class="history-header">
           <span class="history-id">#{{ item.id }}</span>
-          <span class="history-time">{{ formatTime(item.timestamp) }}</span>
+          <div>
+            <span class="history-time">{{ formatTime(item.timestamp) }}</span>
+            <span class="history-duration" v-if="getTotalDuration(item)">{{ getTotalDuration(item) }}</span>
+          </div>
         </div>
 
         <!-- Workflow Timeline -->
@@ -492,6 +508,7 @@
               <span v-else>{{ index + 1 }}</span>
             </div>
             <div class="step-label">{{ step.label }}</div>
+            <div class="step-duration" v-if="getStepDuration(item, index)">{{ getStepDuration(item, index) }}</div>
           </div>
         </div>
 
@@ -668,6 +685,21 @@
           </div>
         </template>
 
+        <!-- Watch received step -->
+        <template v-if="modal.step?.name === 'watch_received'">
+          <div class="modal-row">
+            <span class="modal-label">Timestamp</span>
+            <span class="modal-value">{{ formatFullTime(modal.step.timestamp) }}</span>
+          </div>
+          <div class="modal-row">
+            <span class="modal-label">Status</span>
+            <span class="modal-value">{{ modal.step.details }}</span>
+          </div>
+          <div style="font-size: 0.8rem; color: #4ade80; margin-top: 12px;">
+            &#10003; Watch acknowledged receipt of response
+          </div>
+        </template>
+
         <!-- Error step -->
         <template v-if="modal.step?.name === 'error' || modal.step?.error">
           <div class="modal-row">
@@ -833,6 +865,40 @@
           return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
         }
 
+        const formatDuration = (ms) => {
+          if (ms < 1000) return ms + 'ms'
+          if (ms < 60000) return (ms / 1000).toFixed(1) + 's'
+          return (ms / 60000).toFixed(1) + 'm'
+        }
+
+        const getTotalDuration = (item) => {
+          if (!item.steps || item.steps.length < 2) return null
+          const firstStep = item.steps[0]
+          const lastStep = item.steps[item.steps.length - 1]
+          if (!firstStep.timestamp || !lastStep.timestamp) return null
+          // Skip if last step is still in progress
+          if (lastStep.status === 'in_progress') return null
+          const start = new Date(firstStep.timestamp).getTime()
+          const end = new Date(lastStep.timestamp).getTime()
+          const duration = end - start
+          if (duration <= 0) return null
+          return formatDuration(duration)
+        }
+
+        const getStepDuration = (item, index) => {
+          if (!item.steps || index === 0) return null
+          const currentStep = item.steps[index]
+          const prevStep = item.steps[index - 1]
+          if (!currentStep.timestamp || !prevStep.timestamp) return null
+          // Don't show duration for in_progress steps
+          if (currentStep.status === 'in_progress') return null
+          const start = new Date(prevStep.timestamp).getTime()
+          const end = new Date(currentStep.timestamp).getTime()
+          const duration = end - start
+          if (duration <= 0) return null
+          return formatDuration(duration)
+        }
+
         const openModal = (item, step) => {
           modal.value = { visible: true, item, step }
         }
@@ -886,6 +952,9 @@
           formatTime,
           formatFullTime,
           formatSize,
+          formatDuration,
+          getTotalDuration,
+          getStepDuration,
           openModal,
           closeModal,
           openSettings,
