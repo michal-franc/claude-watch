@@ -2,6 +2,8 @@
 
 Voice-to-Claude pipeline: Speak into your watch, Claude Code executes your command.
 
+![Dashboard Screenshot](screenshot.png)
+
 ## Pipeline Flow
 
 ```
@@ -69,7 +71,9 @@ Use this IP in Macrodroid.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
+| `/` | GET | Web dashboard |
 | `/transcribe` | POST | Send audio, returns transcript, opens Claude |
+| `/api/history` | GET | Request history JSON |
 | `/health` | GET | Health check |
 
 ## Configuration
@@ -130,6 +134,10 @@ curl -X POST http://localhost:5566/transcribe \
 
 ```
 claude-watch/
-├── server.py    # HTTP server
-└── README.md    # This file
+├── server.py        # HTTP server
+├── dashboard.html   # Web dashboard (Vue.js)
+├── test_server.py   # Unit tests
+├── screenshot.png   # Dashboard screenshot
+├── CLAUDE.md        # Project context for Claude Code
+└── README.md        # This file
 ```
