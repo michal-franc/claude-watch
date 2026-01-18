@@ -73,39 +73,47 @@ class TestRunClaude:
         server.claude_workdir = "/tmp"
 
     @patch("server.subprocess.Popen")
-    def test_run_claude_launches_alacritty(self, mock_popen):
-        """Should launch alacritty with claude command and unique title"""
+    @patch("server.subprocess.run")
+    def test_run_claude_creates_tmux_session(self, mock_run, mock_popen):
+        """Should create tmux session with claude"""
         server.claude_workdir = "/home/user/project"
+        # Mock tmux has-session to return not found (session doesn't exist)
+        mock_run.return_value.returncode = 1
 
         result = server.run_claude("test prompt")
 
         assert result is True
-        mock_popen.assert_called_once_with([
-            'alacritty',
-            '--title', server.CLAUDE_WINDOW_TITLE,
-            '--working-directory', '/home/user/project',
-            '-e', 'claude', 'test prompt'
-        ])
+        # Check tmux new-session was called
+        calls = [str(c) for c in mock_run.call_args_list]
+        assert any('new-session' in c for c in calls)
 
     @patch("server.subprocess.Popen")
-    def test_run_claude_cooldown_blocks_second_call(self, mock_popen):
-        """Should block launch within cooldown period"""
+    @patch("server.subprocess.run")
+    def test_run_claude_reuses_tmux_session(self, mock_run, mock_popen):
+        """Should reuse existing tmux session"""
+        server.claude_workdir = "/home/user/project"
+        # Mock tmux has-session to return success (session exists)
+        mock_run.return_value.returncode = 0
+
+        result = server.run_claude("test prompt")
+
+        assert result is True
+        # Check tmux send-keys was called
+        calls = [str(c) for c in mock_run.call_args_list]
+        assert any('send-keys' in c for c in calls)
+
+    @patch("server.subprocess.Popen")
+    @patch("server.subprocess.run")
+    def test_run_claude_cooldown_blocks_new_session(self, mock_run, mock_popen):
+        """Should block new session within cooldown period"""
+        # First call - no session exists
+        mock_run.return_value.returncode = 1
         server.run_claude("first prompt")
+
+        # Second call - still no session, but cooldown active
         result = server.run_claude("second prompt")
 
         assert result is False
-        assert mock_popen.call_count == 1
-
-    @patch("server.subprocess.Popen")
-    def test_run_claude_allows_after_cooldown(self, mock_popen):
-        """Should allow launch after cooldown expires"""
-        server.run_claude("first prompt")
-        server.last_claude_launch = time.time() - server.LAUNCH_COOLDOWN - 1
-
-        result = server.run_claude("second prompt")
-
-        assert result is True
-        assert mock_popen.call_count == 2
 
 
 class TestDictationHandler:
