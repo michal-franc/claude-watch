@@ -48,6 +48,7 @@ claude_workdir = None
 
 # Track the Claude process for reuse
 claude_process = None
+CLAUDE_WINDOW_TITLE = "claude-watch-session"
 
 # Request history for dashboard
 request_history = []
@@ -106,9 +107,9 @@ def is_claude_running():
 def send_to_existing_claude(text: str) -> bool:
     """Send text to existing Claude window using xdotool"""
     try:
-        # Find Claude window (alacritty running claude)
+        # Find our specific Claude window by exact title
         result = subprocess.run(
-            ['xdotool', 'search', '--name', 'claude'],
+            ['xdotool', 'search', '--name', f'^{CLAUDE_WINDOW_TITLE}$'],
             capture_output=True,
             text=True,
             timeout=5
@@ -117,11 +118,11 @@ def send_to_existing_claude(text: str) -> bool:
         window_ids = [w for w in window_ids if w]
 
         if not window_ids:
-            print("[CLAUDE] No existing Claude window found")
+            print(f"[CLAUDE] No window found with title '{CLAUDE_WINDOW_TITLE}'")
             return False
 
         window_id = window_ids[0]
-        print(f"[CLAUDE] Found existing window: {window_id}")
+        print(f"[CLAUDE] Found claude-watch window: {window_id}")
 
         # Focus the window
         subprocess.run(['xdotool', 'windowactivate', window_id], timeout=5)
@@ -161,10 +162,13 @@ def run_claude(text: str):
         return False
 
     last_claude_launch = now
-    claude_process = subprocess.Popen(
-        ['alacritty', '--working-directory', claude_workdir, '-e', 'claude', text]
-    )
-    print(f"[CLAUDE] Spawned new Claude instance (PID: {claude_process.pid})")
+    claude_process = subprocess.Popen([
+        'alacritty',
+        '--title', CLAUDE_WINDOW_TITLE,
+        '--working-directory', claude_workdir,
+        '-e', 'claude', text
+    ])
+    print(f"[CLAUDE] Spawned new Claude instance (PID: {claude_process.pid}, title: {CLAUDE_WINDOW_TITLE})")
     return True
 
 

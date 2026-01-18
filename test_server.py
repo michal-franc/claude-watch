@@ -74,14 +74,16 @@ class TestRunClaude:
 
     @patch("server.subprocess.Popen")
     def test_run_claude_launches_alacritty(self, mock_popen):
-        """Should launch alacritty with claude command"""
+        """Should launch alacritty with claude command and unique title"""
         server.claude_workdir = "/home/user/project"
 
         result = server.run_claude("test prompt")
 
         assert result is True
         mock_popen.assert_called_once_with([
-            'alacritty', '--working-directory', '/home/user/project',
+            'alacritty',
+            '--title', server.CLAUDE_WINDOW_TITLE,
+            '--working-directory', '/home/user/project',
             '-e', 'claude', 'test prompt'
         ])
 
