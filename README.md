@@ -2,7 +2,7 @@
 
 Voice-to-Claude pipeline: Speak into your watch, Claude Code executes your command.
 
-![Dashboard Screenshot](screenshot.png)
+![Dashboard Screenshot](web_ui.jpg)
 
 ## Pipeline Flow
 
@@ -137,7 +137,7 @@ claude-watch/
 ├── server.py        # HTTP server
 ├── dashboard.html   # Web dashboard (Vue.js)
 ├── test_server.py   # Unit tests
-├── screenshot.png   # Dashboard screenshot
+├── web_ui.jpg       # Dashboard screenshot
 ├── CLAUDE.md        # Project context for Claude Code
 └── README.md        # This file
 ```
