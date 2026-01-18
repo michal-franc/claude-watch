@@ -1,6 +1,7 @@
 package com.claudewatch.app
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
 import android.os.Bundle
@@ -9,6 +10,7 @@ import android.os.Vibrator
 import android.util.Log
 import android.view.View
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,11 +27,10 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "ClaudeWatch"
-        // TODO: Make this configurable
-        private const val SERVER_URL = "http://192.168.1.100:5566/transcribe"
     }
 
     private lateinit var recordButton: Button
+    private lateinit var settingsButton: ImageButton
     private lateinit var statusText: TextView
     private lateinit var progressBar: ProgressBar
 
@@ -59,11 +60,16 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         recordButton = findViewById(R.id.recordButton)
+        settingsButton = findViewById(R.id.settingsButton)
         statusText = findViewById(R.id.statusText)
         progressBar = findViewById(R.id.progressBar)
 
         recordButton.setOnClickListener {
             onRecordButtonClick()
+        }
+
+        settingsButton.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
         }
 
         showStatus("Tap to record")
@@ -187,10 +193,11 @@ class MainActivity : AppCompatActivity() {
 
     private suspend fun sendToServer(file: File): Result<String> {
         return try {
+            val serverUrl = SettingsActivity.getServerUrl(this@MainActivity)
             val requestBody = file.asRequestBody("audio/mp4".toMediaType())
 
             val request = Request.Builder()
-                .url(SERVER_URL)
+                .url(serverUrl)
                 .post(requestBody)
                 .build()
 
