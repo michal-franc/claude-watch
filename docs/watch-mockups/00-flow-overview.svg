@@ -1,0 +1,128 @@
+<svg width="1400" height="380" viewBox="0 0 1400 380" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#0099FF"/>
+      <stop offset="100%" style="stop-color:#0077CC"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1400" height="380" fill="#1a1a1a"/>
+
+  <!-- Title -->
+  <text x="700" y="35" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="20" font-weight="bold">Claude Watch - User Flow</text>
+
+  <!-- Arrow style -->
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#666666"/>
+    </marker>
+  </defs>
+
+  <!-- === SCREEN 1: Idle === -->
+  <g transform="translate(50, 70)">
+    <text x="100" y="-10" text-anchor="middle" fill="#888888" font-family="Arial, sans-serif" font-size="12">1. IDLE</text>
+    <circle cx="100" cy="125" r="100" fill="#000000" stroke="#333333" stroke-width="3"/>
+    <text x="100" y="75" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="11">Tap to record</text>
+    <ellipse cx="100" cy="130" rx="40" ry="40" fill="url(#blueGrad)"/>
+    <text x="100" y="136" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="bold">Record</text>
+    <!-- Settings icon -->
+    <circle cx="155" cy="55" r="10" fill="#333333"/>
+    <circle cx="155" cy="55" r="4" fill="none" stroke="#ffffff" stroke-width="1.5"/>
+  </g>
+
+  <!-- Arrow 1->2 -->
+  <line x1="255" y1="195" x2="295" y2="195" stroke="#666666" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="275" y="185" text-anchor="middle" fill="#666666" font-family="Arial, sans-serif" font-size="9">tap</text>
+
+  <!-- === SCREEN 2: Recording === -->
+  <g transform="translate(300, 70)">
+    <text x="100" y="-10" text-anchor="middle" fill="#888888" font-family="Arial, sans-serif" font-size="12">2. RECORDING</text>
+    <circle cx="100" cy="125" r="100" fill="#000000" stroke="#333333" stroke-width="3"/>
+    <text x="100" y="70" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="11">Recording...</text>
+    <!-- Recording dots -->
+    <circle cx="80" cy="82" r="3" fill="#ff4444"/>
+    <circle cx="92" cy="82" r="3" fill="#ff4444"/>
+    <circle cx="104" cy="82" r="3" fill="#ff4444"/>
+    <ellipse cx="100" cy="130" rx="40" ry="40" fill="#cc0000"/>
+    <text x="100" y="128" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="10" font-weight="bold">Stop</text>
+    <text x="100" y="142" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="10" font-weight="bold">&amp; Send</text>
+  </g>
+
+  <!-- Arrow 2->3 -->
+  <line x1="505" y1="195" x2="545" y2="195" stroke="#666666" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="525" y="185" text-anchor="middle" fill="#666666" font-family="Arial, sans-serif" font-size="9">stop</text>
+
+  <!-- === SCREEN 3: Waiting === -->
+  <g transform="translate(550, 70)">
+    <text x="100" y="-10" text-anchor="middle" fill="#888888" font-family="Arial, sans-serif" font-size="12">3. WAITING</text>
+    <circle cx="100" cy="125" r="100" fill="#000000" stroke="#333333" stroke-width="3"/>
+    <text x="100" y="60" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="10">Waiting for Claude...</text>
+    <ellipse cx="100" cy="115" rx="40" ry="40" fill="#ff8800"/>
+    <text x="100" y="121" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="bold">Abort</text>
+    <!-- Spinner -->
+    <circle cx="100" cy="175" r="10" fill="none" stroke="#333333" stroke-width="2"/>
+    <path d="M 100 165 A 10 10 0 0 1 110 175" fill="none" stroke="#33b5e5" stroke-width="2" stroke-linecap="round"/>
+  </g>
+
+  <!-- Arrow 3->4 -->
+  <line x1="755" y1="195" x2="795" y2="195" stroke="#666666" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="775" y="185" text-anchor="middle" fill="#666666" font-family="Arial, sans-serif" font-size="9">response</text>
+
+  <!-- === SCREEN 4: Playing === -->
+  <g transform="translate(800, 70)">
+    <text x="100" y="-10" text-anchor="middle" fill="#888888" font-family="Arial, sans-serif" font-size="12">4. PLAYING</text>
+    <circle cx="100" cy="125" r="100" fill="#000000" stroke="#333333" stroke-width="3"/>
+    <text x="100" y="55" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="11">Playing...</text>
+    <!-- Waveform bars -->
+    <rect x="60" y="65" width="3" height="15" fill="#33b5e5"/>
+    <rect x="67" y="62" width="3" height="21" fill="#33b5e5"/>
+    <rect x="74" y="58" width="3" height="29" fill="#33b5e5"/>
+    <rect x="81" y="64" width="3" height="17" fill="#33b5e5"/>
+    <rect x="88" y="60" width="3" height="25" fill="#33b5e5"/>
+    <rect x="95" y="66" width="3" height="13" fill="#33b5e5"/>
+    <rect x="102" y="61" width="3" height="23" fill="#33b5e5"/>
+    <rect x="109" y="57" width="3" height="31" fill="#33b5e5"/>
+    <rect x="116" y="63" width="3" height="19" fill="#33b5e5"/>
+    <rect x="123" y="59" width="3" height="27" fill="#33b5e5"/>
+    <rect x="130" y="65" width="3" height="15" fill="#33b5e5"/>
+    <!-- Replay button -->
+    <ellipse cx="70" cy="125" rx="28" ry="28" fill="#669900"/>
+    <text x="70" y="130" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="9" font-weight="bold">Replay</text>
+    <!-- Pause button -->
+    <ellipse cx="130" cy="125" rx="28" ry="28" fill="#0077cc"/>
+    <text x="130" y="130" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="9" font-weight="bold">Pause</text>
+    <!-- Done button -->
+    <ellipse cx="100" cy="185" rx="28" ry="20" fill="#669900"/>
+    <text x="100" y="190" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="10" font-weight="bold">Done</text>
+  </g>
+
+  <!-- Arrow 4->1 (curved back) -->
+  <path d="M 1005 195 Q 1030 195, 1030 280 Q 1030 340, 150 340 Q 50 340, 50 260 L 50 230"
+        fill="none" stroke="#666666" stroke-width="2" stroke-dasharray="5,3"/>
+  <polygon points="50,235 45,245 55,245" fill="#666666"/>
+  <text x="540" y="355" text-anchor="middle" fill="#666666" font-family="Arial, sans-serif" font-size="9">done - back to idle</text>
+
+  <!-- === SCREEN 5: Settings (separate) === -->
+  <g transform="translate(1150, 70)">
+    <text x="100" y="-10" text-anchor="middle" fill="#888888" font-family="Arial, sans-serif" font-size="12">SETTINGS</text>
+    <circle cx="100" cy="125" r="100" fill="#000000" stroke="#333333" stroke-width="3"/>
+    <text x="100" y="55" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="13" font-weight="bold">Settings</text>
+    <!-- IP field -->
+    <text x="50" y="75" fill="#888888" font-family="Arial, sans-serif" font-size="9">Server IP</text>
+    <rect x="50" y="80" width="100" height="20" rx="3" fill="#1a1a1a" stroke="#444444"/>
+    <text x="55" y="94" fill="#ffffff" font-family="monospace" font-size="9">192.168.1.100</text>
+    <!-- Port field -->
+    <text x="50" y="115" fill="#888888" font-family="Arial, sans-serif" font-size="9">Port</text>
+    <rect x="50" y="120" width="100" height="20" rx="3" fill="#1a1a1a" stroke="#444444"/>
+    <text x="55" y="134" fill="#ffffff" font-family="monospace" font-size="9">5566</text>
+    <!-- Save button -->
+    <rect x="60" y="155" width="80" height="28" rx="14" fill="#669900"/>
+    <text x="100" y="174" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="11" font-weight="bold">Save</text>
+  </g>
+
+  <!-- Settings arrow from idle -->
+  <path d="M 205 95 Q 230 60, 1150 95" fill="none" stroke="#555555" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="680" y="50" text-anchor="middle" fill="#555555" font-family="Arial, sans-serif" font-size="9">settings icon</text>
+
+</svg>
