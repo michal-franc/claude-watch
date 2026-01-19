@@ -9,6 +9,7 @@ import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
@@ -65,6 +66,7 @@ class MainActivity : Activity() {
     private var currentAudioFile: File? = null
     private var currentRequestId: String? = null
     private var pollingJob: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main + Job())
     private val httpClient = OkHttpClient.Builder()
@@ -179,6 +181,7 @@ class MainActivity : Activity() {
         super.onDestroy()
         pollingJob?.cancel()
         coroutineScope.cancel()
+        releaseWakeLock()
         stopRecording()
         mediaPlayer?.release()
         mediaPlayer = null
@@ -204,6 +207,7 @@ class MainActivity : Activity() {
         pollingJob = null
         isWaitingForResponse = false
         currentRequestId = null
+        releaseWakeLock()
         showStatus("Cancelled")
         vibrate(50)
         updateUIState()
@@ -381,6 +385,7 @@ class MainActivity : Activity() {
     }
 
     private fun pollForResponse(requestId: String) {
+        acquireWakeLock()
         pollingJob = coroutineScope.launch {
             var attempts = 0
             while (attempts < MAX_POLL_ATTEMPTS && isActive) {
@@ -401,6 +406,7 @@ class MainActivity : Activity() {
 
                             progressBar.visibility = View.GONE
                             isWaitingForResponse = false
+                            releaseWakeLock()
 
                             if (type == "audio") {
                                 val audioUrl = result.optString("audio_url", "")
@@ -429,6 +435,7 @@ class MainActivity : Activity() {
                             currentRequestId = null
                             showStatus("Sent to Claude")
                             updateUIState()
+                            releaseWakeLock()
                             return@launch
                         } else if (status == "not_found") {
                             Log.w(TAG, "Request not found on server")
@@ -447,6 +454,7 @@ class MainActivity : Activity() {
             currentRequestId = null
             showStatus("Response timeout")
             updateUIState()
+            releaseWakeLock()
         }
     }
 
@@ -686,5 +694,30 @@ class MainActivity : Activity() {
     private fun vibrate(pattern: LongArray) {
         val vibrator = getSystemService(Vibrator::class.java)
         vibrator?.vibrate(VibrationEffect.createWaveform(pattern, -1))
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock == null) {
+            val powerManager = getSystemService(PowerManager::class.java)
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "ClaudeWatch::ResponsePolling"
+            )
+        }
+        wakeLock?.let {
+            if (!it.isHeld) {
+                it.acquire(3 * 60 * 1000L) // 3 minute timeout
+                Log.d(TAG, "Wake lock acquired")
+            }
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let {
+            if (it.isHeld) {
+                it.release()
+                Log.d(TAG, "Wake lock released")
+            }
+        }
     }
 }
