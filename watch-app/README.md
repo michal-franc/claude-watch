@@ -2,6 +2,10 @@
 
 Voice recording app for Galaxy Watch that sends audio directly to the claude-watch server.
 
+## UI Flow
+
+![Watch UI Flow](../docs/watch-mockups/00-flow-overview.svg)
+
 ## Features
 
 - One-tap recording start/stop
