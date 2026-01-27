@@ -33,3 +33,14 @@ Thumbs.db
 *.m4a
 *.mp3
 *.wav
+
+# Android
+**/local.properties
+**/.gradle/
+**/build/
+*.apk
+*.aab
+
+# Logs
+*.log
+excalidraw.log
