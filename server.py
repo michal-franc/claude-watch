@@ -11,9 +11,11 @@ Arguments:
 Endpoints:
     POST /transcribe - Send audio data in body, returns transcript and executes Claude
     GET /health - Health check
+    WS /ws - WebSocket for real-time state updates
 """
 
 import argparse
+import asyncio
 import os
 import re
 import sys
@@ -22,8 +24,11 @@ import select
 import subprocess
 import threading
 import uuid
+import weakref
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
+
+from aiohttp import web
 
 from logger import logger
 
@@ -85,6 +90,81 @@ CONFIG_OPTIONS = {
 # Directory for temporary audio files
 AUDIO_CACHE_DIR = "/tmp/claude-watch-audio"
 os.makedirs(AUDIO_CACHE_DIR, exist_ok=True)
+
+# WebSocket state management
+claude_state = {
+    "status": "idle",  # idle, listening, thinking, speaking
+    "current_request_id": None,
+    "last_update": None
+}
+
+# Chat history (in-memory, last 50 messages)
+chat_history = []
+MAX_CHAT_HISTORY = 50
+
+# Connected WebSocket clients
+websocket_clients = set()
+
+# Event loop for WebSocket (set when server starts)
+ws_loop = None
+
+
+def broadcast_message(message: dict):
+    """Broadcast a message to all connected WebSocket clients"""
+    if not websocket_clients or ws_loop is None:
+        return
+
+    async def _broadcast():
+        dead_clients = set()
+        msg_json = json.dumps(message)
+        for ws in websocket_clients:
+            try:
+                await ws.send_str(msg_json)
+            except Exception as e:
+                logger.debug(f"WebSocket send error: {e}")
+                dead_clients.add(ws)
+        # Remove dead clients
+        for ws in dead_clients:
+            websocket_clients.discard(ws)
+
+    try:
+        asyncio.run_coroutine_threadsafe(_broadcast(), ws_loop)
+    except Exception as e:
+        logger.debug(f"Broadcast error: {e}")
+
+
+def set_claude_state(status: str, request_id: str = None):
+    """Update Claude state and broadcast to clients"""
+    claude_state["status"] = status
+    claude_state["current_request_id"] = request_id
+    claude_state["last_update"] = datetime.now().isoformat()
+
+    broadcast_message({
+        "type": "state",
+        "status": status,
+        "request_id": request_id
+    })
+    logger.info(f"[STATE] Claude state: {status}")
+
+
+def add_chat_message(role: str, content: str):
+    """Add a message to chat history and broadcast"""
+    message = {
+        "role": role,
+        "content": content,
+        "timestamp": datetime.now().isoformat()
+    }
+    chat_history.append(message)
+
+    # Trim to max size
+    while len(chat_history) > MAX_CHAT_HISTORY:
+        chat_history.pop(0)
+
+    broadcast_message({
+        "type": "chat",
+        **message
+    })
+    logger.info(f"[CHAT] {role}: {content[:50]}...")
 
 
 def text_to_speech(text: str, request_id: str) -> str:
@@ -312,6 +392,9 @@ def monitor_claude_response(request_id: str, initial_output: str, prompt_text: s
         'details': f'Response captured ({len(response)} chars)'
     })
 
+    # Add Claude's response to chat history (even if responses disabled)
+    add_chat_message("claude", response)
+
     # Check if responses are disabled
     if response_config['mode'] == 'disabled':
         claude_responses[request_id] = {
@@ -326,6 +409,8 @@ def monitor_claude_response(request_id: str, initial_output: str, prompt_text: s
             'details': 'Responses disabled in settings'
         })
         print(f"[MONITOR] Responses disabled, not storing for {request_id}")
+        # Still update state to idle
+        set_claude_state("idle")
         return
 
     # Add response captured step
@@ -371,6 +456,18 @@ def monitor_claude_response(request_id: str, initial_output: str, prompt_text: s
         'timestamp': datetime.now().isoformat()
     }
     print(f"[MONITOR] Response captured for {request_id}: {response[:100]}...")
+
+    # Update state to speaking, then idle after delay
+    set_claude_state("speaking", request_id)
+
+    def return_to_idle():
+        time.sleep(5)
+        if claude_state.get("status") == "speaking":
+            set_claude_state("idle")
+
+    idle_thread = threading.Thread(target=return_to_idle)
+    idle_thread.daemon = True
+    idle_thread.start()
 
 
 def add_response_step(request_id: str, step: dict):
@@ -464,6 +561,12 @@ def run_claude(text: str, request_id: str = None):
     global last_claude_launch
     now = time.time()
 
+    # Add user message to chat history
+    add_chat_message("user", text)
+
+    # Update state to thinking
+    set_claude_state("thinking", request_id)
+
     # Capture initial state before sending
     initial_output = capture_tmux_output() if is_tmux_session_running() else ""
 
@@ -480,10 +583,12 @@ def run_claude(text: str, request_id: str = None):
                 thread.start()
             return True
         print("[CLAUDE] Failed to send to existing session")
+        set_claude_state("idle")
 
     # Cooldown only applies to creating new sessions
     if now - last_claude_launch < LAUNCH_COOLDOWN:
         print(f"[GUARD] Skipping Claude launch - cooldown active ({LAUNCH_COOLDOWN}s)")
+        set_claude_state("idle")
         return False
 
     last_claude_launch = now
@@ -495,6 +600,8 @@ def run_claude(text: str, request_id: str = None):
         thread = threading.Thread(target=monitor_claude_response, args=(request_id, "", text))
         thread.daemon = True
         thread.start()
+    elif not success:
+        set_claude_state("idle")
 
     return success
 
@@ -541,6 +648,11 @@ class DictationHandler(BaseHTTPRequestHandler):
             self.handle_response_ack()
             return
 
+        # Handle text message from phone app
+        if self.path == '/api/message':
+            self.handle_text_message(content_length)
+            return
+
         print(f"=== Incoming Request ===")
         print(f"Path: {self.path}")
         print(f"Content-Type: {content_type}")
@@ -555,6 +667,9 @@ class DictationHandler(BaseHTTPRequestHandler):
 
         received_at = datetime.now()
         request_id = str(uuid.uuid4())[:8]  # Short unique ID
+
+        # Update state to listening (audio received, being transcribed)
+        set_claude_state("listening", request_id)
         entry = {
             'id': len(request_history) + 1,
             'request_id': request_id,
@@ -878,6 +993,50 @@ class DictationHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps({'status': 'ok'}).encode())
 
+    def handle_text_message(self, content_length):
+        """Handle POST /api/message for text messages from phone app"""
+        try:
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode())
+            text = data.get('text', '').strip()
+
+            if not text:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    'status': 'error',
+                    'message': 'No text provided'
+                }).encode())
+                return
+
+            request_id = str(uuid.uuid4())[:8]
+            print(f"[TEXT] Received message: {text[:50]}...")
+
+            # Launch Claude with the text
+            launched = run_claude(text, request_id)
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                'status': 'ok',
+                'request_id': request_id,
+                'launched': launched
+            }).encode())
+
+        except json.JSONDecodeError as e:
+            self.send_response(400)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                'status': 'error',
+                'message': f'Invalid JSON: {e}'
+            }).encode())
+
     def handle_audio_file(self):
         """Serve audio file for a request"""
         request_id = self.path.split('/')[-1]
@@ -923,6 +1082,79 @@ class DictationHandler(BaseHTTPRequestHandler):
         print(f"[HTTP] {args[0]}")
 
 
+# WebSocket port
+WS_PORT = 5567
+
+
+async def websocket_handler(request):
+    """Handle WebSocket connections"""
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    websocket_clients.add(ws)
+    logger.info(f"[WS] Client connected. Total clients: {len(websocket_clients)}")
+
+    # Send current state and chat history on connect
+    try:
+        await ws.send_json({
+            "type": "state",
+            "status": claude_state["status"],
+            "request_id": claude_state.get("current_request_id")
+        })
+        await ws.send_json({
+            "type": "history",
+            "messages": chat_history
+        })
+    except Exception as e:
+        logger.error(f"[WS] Error sending initial state: {e}")
+
+    try:
+        async for msg in ws:
+            # Handle incoming messages (ping/pong, etc)
+            if msg.type == web.WSMsgType.TEXT:
+                logger.debug(f"[WS] Received: {msg.data}")
+            elif msg.type == web.WSMsgType.ERROR:
+                logger.error(f"[WS] Error: {ws.exception()}")
+    finally:
+        websocket_clients.discard(ws)
+        logger.info(f"[WS] Client disconnected. Total clients: {len(websocket_clients)}")
+
+    return ws
+
+
+async def ws_health_handler(request):
+    """Health check for WebSocket server"""
+    return web.json_response({"status": "ok", "clients": len(websocket_clients)})
+
+
+async def start_websocket_server():
+    """Start the aiohttp WebSocket server"""
+    global ws_loop
+    ws_loop = asyncio.get_event_loop()
+
+    app = web.Application()
+    app.router.add_get('/ws', websocket_handler)
+    app.router.add_get('/health', ws_health_handler)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', WS_PORT)
+    await site.start()
+    print(f"WebSocket server listening on port {WS_PORT}")
+    print(f"Connect via: ws://localhost:{WS_PORT}/ws")
+
+    # Keep running
+    while True:
+        await asyncio.sleep(3600)
+
+
+def run_websocket_server():
+    """Run WebSocket server in a separate thread"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(start_websocket_server())
+
+
 def main():
     global claude_workdir
 
@@ -942,6 +1174,10 @@ def main():
         sys.exit(1)
 
     claude_workdir = folder
+
+    # Start WebSocket server in background thread
+    ws_thread = threading.Thread(target=run_websocket_server, daemon=True)
+    ws_thread.start()
 
     server = HTTPServer(('0.0.0.0', PORT), DictationHandler)
     print(f"Dictation receiver listening on port {PORT}")

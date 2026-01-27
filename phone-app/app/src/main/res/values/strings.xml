@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Claude Companion</string>
+    <string name="settings_title">Settings</string>
+    <string name="server_address">Server Address</string>
+    <string name="server_address_summary">WebSocket server IP:port</string>
+    <string name="kiosk_mode">Kiosk Mode</string>
+    <string name="kiosk_mode_summary">Fullscreen mode (triple-tap corner to exit)</string>
+    <string name="connection_status">Connection Status</string>
+    <string name="connected">Connected</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="connecting">Connecting...</string>
+</resources>

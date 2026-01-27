@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="900" height="200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="orangeGradient" cx="50%" cy="30%" r="70%">
+      <stop offset="30%" style="stop-color:#FBBF24"/>
+      <stop offset="100%" style="stop-color:#D97706"/>
+    </radialGradient>
+    <radialGradient id="grayGradient" cx="50%" cy="30%" r="70%">
+      <stop offset="30%" style="stop-color:#888"/>
+      <stop offset="100%" style="stop-color:#555"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="200" fill="#1a1a2e"/>
+
+  <!-- IDLE -->
+  <g transform="translate(75, 100)">
+    <!-- Body -->
+    <ellipse cx="0" cy="10" rx="40" ry="45" fill="url(#orangeGradient)"/>
+    <!-- Ears -->
+    <circle cx="-30" cy="-35" r="10" fill="url(#orangeGradient)"/>
+    <circle cx="30" cy="-35" r="10" fill="url(#orangeGradient)"/>
+    <!-- Eyes -->
+    <ellipse cx="-15" cy="0" rx="9" ry="10" fill="white"/>
+    <ellipse cx="15" cy="0" rx="9" ry="10" fill="white"/>
+    <circle cx="-15" cy="2" r="5" fill="black"/>
+    <circle cx="15" cy="2" r="5" fill="black"/>
+    <!-- Smile -->
+    <path d="M -15 25 Q 0 35 15 25" stroke="black" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <!-- Label -->
+    <text x="0" y="75" text-anchor="middle" fill="#4CAF50" font-family="Arial" font-size="12" font-weight="bold">IDLE</text>
+  </g>
+
+  <!-- LISTENING -->
+  <g transform="translate(225, 100)">
+    <!-- Body -->
+    <ellipse cx="0" cy="10" rx="40" ry="45" fill="url(#orangeGradient)"/>
+    <!-- Ears (perked up) -->
+    <ellipse cx="-32" cy="-40" rx="10" ry="12" fill="url(#orangeGradient)" transform="rotate(-15 -32 -40)"/>
+    <ellipse cx="32" cy="-40" rx="10" ry="12" fill="url(#orangeGradient)" transform="rotate(15 32 -40)"/>
+    <!-- Eyes (wide, looking up) -->
+    <ellipse cx="-15" cy="-2" rx="10" ry="12" fill="white"/>
+    <ellipse cx="15" cy="-2" rx="10" ry="12" fill="white"/>
+    <circle cx="-15" cy="-4" r="5" fill="black"/>
+    <circle cx="15" cy="-4" r="5" fill="black"/>
+    <!-- Small smile -->
+    <path d="M -10 25 Q 0 30 10 25" stroke="black" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <!-- Label -->
+    <text x="0" y="75" text-anchor="middle" fill="#2196F3" font-family="Arial" font-size="12" font-weight="bold">LISTENING</text>
+  </g>
+
+  <!-- THINKING -->
+  <g transform="translate(375, 100)">
+    <!-- Body -->
+    <ellipse cx="0" cy="10" rx="40" ry="45" fill="url(#orangeGradient)"/>
+    <!-- Ears -->
+    <circle cx="-30" cy="-35" r="10" fill="url(#orangeGradient)"/>
+    <circle cx="30" cy="-35" r="10" fill="url(#orangeGradient)"/>
+    <!-- Closed eyes -->
+    <path d="M -22 0 Q -15 5 -8 0" stroke="black" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <path d="M 8 0 Q 15 5 22 0" stroke="black" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <!-- Small smile -->
+    <path d="M -10 25 Q 0 30 10 25" stroke="black" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <!-- Thought bubbles -->
+    <circle cx="50" cy="-20" r="5" fill="white" opacity="0.7"/>
+    <circle cx="60" cy="-35" r="8" fill="white" opacity="0.7"/>
+    <circle cx="72" cy="-50" r="12" fill="white" opacity="0.7"/>
+    <!-- Label -->
+    <text x="0" y="75" text-anchor="middle" fill="#FF9800" font-family="Arial" font-size="12" font-weight="bold">THINKING</text>
+  </g>
+
+  <!-- SPEAKING -->
+  <g transform="translate(525, 100)">
+    <!-- Body (slightly squished for bounce) -->
+    <ellipse cx="0" cy="15" rx="42" ry="42" fill="url(#orangeGradient)"/>
+    <!-- Ears -->
+    <circle cx="-32" cy="-30" r="10" fill="url(#orangeGradient)"/>
+    <circle cx="32" cy="-30" r="10" fill="url(#orangeGradient)"/>
+    <!-- Happy eyes -->
+    <ellipse cx="-15" cy="2" rx="9" ry="10" fill="white"/>
+    <ellipse cx="15" cy="2" rx="9" ry="10" fill="white"/>
+    <circle cx="-15" cy="4" r="5" fill="black"/>
+    <circle cx="15" cy="4" r="5" fill="black"/>
+    <circle cx="-13" cy="1" r="2" fill="white"/>
+    <circle cx="17" cy="1" r="2" fill="white"/>
+    <!-- Open mouth -->
+    <ellipse cx="0" cy="30" rx="10" ry="8" fill="black"/>
+    <!-- Label -->
+    <text x="0" y="75" text-anchor="middle" fill="#4CAF50" font-family="Arial" font-size="12" font-weight="bold">SPEAKING</text>
+  </g>
+
+  <!-- SLEEPING -->
+  <g transform="translate(675, 100)">
+    <!-- Body -->
+    <ellipse cx="0" cy="10" rx="40" ry="45" fill="url(#orangeGradient)"/>
+    <!-- Ears (droopy) -->
+    <ellipse cx="-32" cy="-30" rx="10" ry="8" fill="url(#orangeGradient)" transform="rotate(20 -32 -30)"/>
+    <ellipse cx="32" cy="-30" rx="10" ry="8" fill="url(#orangeGradient)" transform="rotate(-20 32 -30)"/>
+    <!-- Closed eyes -->
+    <path d="M -22 0 Q -15 5 -8 0" stroke="black" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <path d="M 8 0 Q 15 5 22 0" stroke="black" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <!-- Tiny smile -->
+    <path d="M -8 25 Q 0 28 8 25" stroke="black" stroke-width="2" fill="none" stroke-linecap="round"/>
+    <!-- Zzz -->
+    <text x="45" y="-10" fill="white" font-family="Arial" font-size="14" opacity="0.8">z</text>
+    <text x="55" y="-25" fill="white" font-family="Arial" font-size="18" opacity="0.6">z</text>
+    <text x="68" y="-42" fill="white" font-family="Arial" font-size="22" opacity="0.4">Z</text>
+    <!-- Label -->
+    <text x="0" y="75" text-anchor="middle" fill="#9C27B0" font-family="Arial" font-size="12" font-weight="bold">SLEEPING</text>
+  </g>
+
+  <!-- OFFLINE -->
+  <g transform="translate(825, 100)">
+    <!-- Body (gray) -->
+    <ellipse cx="0" cy="10" rx="40" ry="45" fill="url(#grayGradient)"/>
+    <!-- Ears (droopy) -->
+    <ellipse cx="-32" cy="-28" rx="10" ry="8" fill="url(#grayGradient)" transform="rotate(30 -32 -28)"/>
+    <ellipse cx="32" cy="-28" rx="10" ry="8" fill="url(#grayGradient)" transform="rotate(-30 32 -28)"/>
+    <!-- Sad eyes -->
+    <ellipse cx="-15" cy="0" rx="9" ry="10" fill="white"/>
+    <ellipse cx="15" cy="0" rx="9" ry="10" fill="white"/>
+    <circle cx="-15" cy="5" r="5" fill="black"/>
+    <circle cx="15" cy="5" r="5" fill="black"/>
+    <!-- Frown -->
+    <path d="M -15 30 Q 0 20 15 30" stroke="black" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <!-- Label -->
+    <text x="0" y="75" text-anchor="middle" fill="#F44336" font-family="Arial" font-size="12" font-weight="bold">OFFLINE</text>
+  </g>
+
+</svg>

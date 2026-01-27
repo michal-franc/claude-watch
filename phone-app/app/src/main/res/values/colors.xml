@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Background -->
+    <color name="background_dark">#1a1a2e</color>
+    <color name="background_surface">#252542</color>
+
+    <!-- Creature colors -->
+    <color name="creature_orange_light">#FBBF24</color>
+    <color name="creature_orange_dark">#D97706</color>
+
+    <!-- Chat bubble colors -->
+    <color name="chat_user_bubble">#0099FF</color>
+    <color name="chat_claude_bubble">#F59E0B</color>
+    <color name="chat_text_light">#FFFFFF</color>
+    <color name="chat_text_dark">#1a1a2e</color>
+
+    <!-- Status colors -->
+    <color name="status_connected">#4CAF50</color>
+    <color name="status_disconnected">#F44336</color>
+    <color name="status_connecting">#FFC107</color>
+
+    <!-- Primary colors -->
+    <color name="primary">#0099FF</color>
+    <color name="primary_dark">#0077CC</color>
+    <color name="accent">#F59E0B</color>
+</resources>
