@@ -3,7 +3,9 @@ package com.claudewatch.companion
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.drawable.ClipDrawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.media.MediaRecorder
 import android.os.Bundle
 import android.util.Log
@@ -23,6 +25,7 @@ import com.claudewatch.companion.kiosk.KioskManager
 import com.claudewatch.companion.network.ChatMessage
 import com.claudewatch.companion.network.ClaudePrompt
 import com.claudewatch.companion.network.ConnectionStatus
+import com.claudewatch.companion.network.ContextUsage
 import com.claudewatch.companion.network.MessageStatus
 import com.claudewatch.companion.network.WebSocketClient
 import android.widget.LinearLayout
@@ -428,7 +431,37 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Collect context usage
+        lifecycleScope.launch {
+            webSocketClient?.contextUsage?.collectLatest { usage ->
+                updateContextUI(usage)
+            }
+        }
+
         webSocketClient?.connect()
+    }
+
+    private fun updateContextUI(usage: ContextUsage) {
+        if (usage.totalContext > 0) {
+            binding.contextBar.visibility = View.VISIBLE
+            binding.contextProgress.progress = usage.contextPercent.toInt().coerceIn(0, 100)
+            binding.contextPercent.text = "${usage.contextPercent.toInt()}%"
+
+            // Change color based on usage level
+            val color = when {
+                usage.contextPercent >= 80 -> ContextCompat.getColor(this, android.R.color.holo_red_light)
+                usage.contextPercent >= 60 -> ContextCompat.getColor(this, android.R.color.holo_orange_light)
+                else -> ContextCompat.getColor(this, android.R.color.holo_green_light)
+            }
+
+            val progressDrawable = binding.contextProgress.progressDrawable as? LayerDrawable
+            val progressLayer = progressDrawable?.findDrawableByLayerId(android.R.id.progress)
+            if (progressLayer is ClipDrawable) {
+                (progressLayer.drawable as? GradientDrawable)?.setColor(color)
+            }
+        } else {
+            binding.contextBar.visibility = View.GONE
+        }
     }
 
     private fun updatePromptUI(prompt: ClaudePrompt?) {
@@ -498,24 +531,48 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun respondToPrompt(optionNum: Int) {
+        val currentPromptValue = webSocketClient?.currentPrompt?.value ?: return
+
         lifecycleScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
                     val serverAddress = SettingsActivity.getServerAddress(this@MainActivity)
                     val baseUrl = "http://${serverAddress.replace(":5567", ":5566")}"
-                    val url = "$baseUrl/api/prompt/respond"
 
-                    val json = JSONObject().apply {
-                        put("option", optionNum)
+                    if (currentPromptValue.isPermission && currentPromptValue.requestId != null) {
+                        // Permission request - use permission endpoint
+                        val url = "$baseUrl/api/permission/respond"
+                        val decision = if (optionNum == 1) "allow" else "deny"
+
+                        val json = JSONObject().apply {
+                            put("request_id", currentPromptValue.requestId)
+                            put("decision", decision)
+                            put("reason", "User ${decision}ed from mobile app")
+                        }
+
+                        val request = Request.Builder()
+                            .url(url)
+                            .post(json.toString().toRequestBody("application/json".toMediaType()))
+                            .build()
+
+                        val response = httpClient.newCall(request).execute()
+                        response.isSuccessful
+                    } else {
+                        // Regular prompt - use prompt endpoint
+                        val url = "$baseUrl/api/prompt/respond"
+
+                        val json = JSONObject().apply {
+                            put("option", optionNum)
+                        }
+
+                        val request = Request.Builder()
+                            .url(url)
+                            .post(json.toString().toRequestBody("application/json".toMediaType()))
+                            .build()
+
+                        val response = httpClient.newCall(request).execute()
+                        response.isSuccessful
                     }
-
-                    val request = Request.Builder()
-                        .url(url)
-                        .post(json.toString().toRequestBody("application/json".toMediaType()))
-                        .build()
-
-                    val response = httpClient.newCall(request).execute()
-                    response.isSuccessful
                 }
 
                 if (result) {

@@ -28,6 +28,13 @@ data class ClaudeState(
     val requestId: String? = null
 )
 
+data class ContextUsage(
+    val totalContext: Int = 0,
+    val contextWindow: Int = 200000,
+    val contextPercent: Float = 0f,
+    val costUsd: Float = 0f
+)
+
 data class PromptOption(
     val num: Int,
     val label: String,
@@ -40,7 +47,10 @@ data class ClaudePrompt(
     val options: List<PromptOption>,
     val timestamp: String,
     val title: String? = null,
-    val context: String? = null
+    val context: String? = null,
+    val requestId: String? = null,  // For permission requests
+    val toolName: String? = null,   // Tool requesting permission
+    val isPermission: Boolean = false
 )
 
 enum class ConnectionStatus {
@@ -78,6 +88,9 @@ class WebSocketClient(
 
     private val _currentPrompt = MutableStateFlow<ClaudePrompt?>(null)
     val currentPrompt: StateFlow<ClaudePrompt?> = _currentPrompt
+
+    private val _contextUsage = MutableStateFlow(ContextUsage())
+    val contextUsage: StateFlow<ContextUsage> = _contextUsage
 
     private val listener = object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -203,6 +216,45 @@ class WebSocketClient(
                     } else {
                         _currentPrompt.value = null
                     }
+                }
+                "permission" -> {
+                    // Permission request from hook - display as prompt
+                    val optionsArray = json.optJSONArray("options") ?: JSONArray()
+                    val options = mutableListOf<PromptOption>()
+                    for (i in 0 until optionsArray.length()) {
+                        val optJson = optionsArray.getJSONObject(i)
+                        options.add(PromptOption(
+                            num = optJson.optInt("num"),
+                            label = optJson.optString("label"),
+                            description = optJson.optString("description", ""),
+                            selected = false
+                        ))
+                    }
+                    _currentPrompt.value = ClaudePrompt(
+                        question = json.optString("question"),
+                        options = options,
+                        timestamp = System.currentTimeMillis().toString(),
+                        title = json.optString("tool_name"),
+                        context = json.optString("context"),
+                        requestId = json.optString("request_id"),
+                        toolName = json.optString("tool_name"),
+                        isPermission = true
+                    )
+                }
+                "permission_resolved" -> {
+                    // Permission was resolved (by this or another client)
+                    val resolvedId = json.optString("request_id")
+                    if (_currentPrompt.value?.requestId == resolvedId) {
+                        _currentPrompt.value = null
+                    }
+                }
+                "usage" -> {
+                    _contextUsage.value = ContextUsage(
+                        totalContext = json.optInt("total_context", 0),
+                        contextWindow = json.optInt("context_window", 200000),
+                        contextPercent = json.optDouble("context_percent", 0.0).toFloat(),
+                        costUsd = json.optDouble("cost_usd", 0.0).toFloat()
+                    )
                 }
             }
         } catch (e: Exception) {

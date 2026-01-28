@@ -51,6 +51,46 @@
 
     </LinearLayout>
 
+    <!-- Context Usage Bar -->
+    <LinearLayout
+        android:id="@+id/contextBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="4dp"
+        android:background="@color/background_surface"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Context:"
+            android:textColor="@android:color/darker_gray"
+            android:textSize="12sp" />
+
+        <ProgressBar
+            android:id="@+id/contextProgress"
+            style="@android:style/Widget.ProgressBar.Horizontal"
+            android:layout_width="0dp"
+            android:layout_height="8dp"
+            android:layout_weight="1"
+            android:layout_marginHorizontal="8dp"
+            android:max="100"
+            android:progress="0"
+            android:progressDrawable="@drawable/context_progress" />
+
+        <TextView
+            android:id="@+id/contextPercent"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="0%"
+            android:textColor="@android:color/white"
+            android:textSize="12sp" />
+
+    </LinearLayout>
+
     <!-- Creature view (40% height) -->
     <com.claudewatch.companion.creature.CreatureView
         android:id="@+id/creatureView"

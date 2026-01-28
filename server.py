@@ -31,6 +31,7 @@ import json
 from aiohttp import web
 
 from logger import logger
+from claude_wrapper import ClaudeWrapper
 
 # Load Deepgram API key
 API_KEY_FILE = "/tmp/deepgram_api_key"
@@ -56,7 +57,8 @@ LAUNCH_COOLDOWN = 5  # seconds
 # Working directory for Claude (set via CLI argument)
 claude_workdir = None
 
-# Track the Claude tmux session
+# Claude wrapper instance (created per request)
+# Note: tmux session name kept for backwards compatibility reference
 CLAUDE_TMUX_SESSION = "claude-watch"
 
 # Request history for dashboard
@@ -105,13 +107,15 @@ MAX_CHAT_HISTORY = 50
 # Connected WebSocket clients
 websocket_clients = set()
 
-# Tmux monitor state
-tmux_monitor_running = False
-last_seen_output = ""
-last_seen_hash = ""
+# Active Claude wrapper (for cancellation)
+active_claude_wrapper: ClaudeWrapper = None
 
 # Current pending prompt (permission request from Claude)
 current_prompt = None  # {question, options: [{num, label, description, selected}], timestamp}
+
+# Pending permission requests from hooks (keyed by request_id)
+pending_permissions = {}  # {request_id: {tool_name, tool_input, tool_use_id, status, decision, reason, timestamp}}
+PERMISSION_TIMEOUT = 120  # seconds
 
 # Event loop for WebSocket (set when server starts)
 ws_loop = None
@@ -175,160 +179,6 @@ def add_chat_message(role: str, content: str):
     logger.info(f"[CHAT] {role}: {content[:50]}...")
 
 
-def is_tool_output(text: str) -> bool:
-    """Check if text looks like Claude tool output (Bash, Read, etc.)"""
-    # Common tool call patterns
-    tool_patterns = [
-        r'^●?\s*(Bash|Read|Write|Edit|Glob|Grep|Task|WebFetch|WebSearch)\s*\(',
-        r'^\.\.\.\s*\+\d+\s+lines?\s*\(ctrl\+o',  # "... +N lines (ctrl+o to expand)"
-        r'^[│├└─┌┐┘┴┬┤┼]+',  # Box-drawing characters at start
-        r'^\s*L\s+ID\s+',  # Table headers like "L ID  START  END"
-    ]
-    for pattern in tool_patterns:
-        if re.search(pattern, text, re.IGNORECASE | re.MULTILINE):
-            return True
-    return False
-
-
-def parse_permission_prompt(output: str) -> dict:
-    """Parse permission prompt from tmux output.
-
-    Returns dict with question, options, and optional context, or None if no prompt found.
-    Handles both Permission prompts and Bash command confirmation prompts.
-    """
-    # Remove ANSI codes
-    clean = re.sub(r'\x1b\[[0-9;]*m', '', output)
-
-    # Check for the navigation hint which indicates an active prompt
-    has_nav_hint = 'Esc to cancel' in clean or 'Enter to select' in clean or 'to navigate' in clean
-    if not has_nav_hint:
-        return None
-
-    # Check if there are numbered options (1. 2. 3. etc.)
-    has_numbered_options = bool(re.search(r'^\s*[>❯]?\s*\d+\.\s+\w+', clean, re.MULTILINE))
-    if not has_numbered_options:
-        return None
-
-    lines = clean.split('\n')
-    question = None
-    options = []
-    context_lines = []
-    in_prompt = False
-    prompt_title = None
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-
-        # Detect start of prompt - look for title line (box char + text or □/☐ + text)
-        if not in_prompt:
-            # Clean line of box drawing chars
-            clean_line = re.sub(r'^[│├└─┌┐┘□☐■☑\s]+', '', stripped).strip()
-
-            # Known prompt titles
-            known_titles = ['Bash command', 'Permission', 'Focus', 'Question', 'Select', 'Choose']
-
-            # Check for known titles
-            for title in known_titles:
-                if clean_line == title or title in stripped:
-                    in_prompt = True
-                    prompt_title = title
-                    logger.debug(f"[PROMPT] Found {title} prompt")
-                    break
-
-            # Also detect generic title pattern: box char followed by short text (likely a title)
-            if not in_prompt and (stripped.startswith('□') or stripped.startswith('☐') or '┌' in line):
-                # Extract potential title
-                title_match = re.match(r'^[□☐┌─\s]*([A-Za-z][A-Za-z\s]{0,20})$', clean_line)
-                if title_match and clean_line and len(clean_line) < 25:
-                    in_prompt = True
-                    prompt_title = clean_line
-                    logger.debug(f"[PROMPT] Found generic prompt with title: {prompt_title}")
-                    continue
-
-            if in_prompt:
-                continue
-
-        if not in_prompt:
-            continue
-
-        # Skip box drawing characters only lines
-        if stripped and re.match(r'^[│├└─┌┐┘┴┬┤┼\s]+$', stripped):
-            continue
-
-        # Remove leading box chars and whitespace
-        stripped = re.sub(r'^[│├└─┌┐┘\s]+', '', stripped).strip()
-
-        if not stripped:
-            continue
-
-        # Skip footer lines
-        if 'Esc to cancel' in stripped or 'Tab to amend' in stripped or 'ctrl+e' in stripped:
-            continue
-        if 'Enter to select' in stripped or 'to navigate' in stripped:
-            continue
-        if 'Chat about' in stripped:
-            continue
-
-        # Detect question (usually ends with ?)
-        if '?' in stripped and not question and not re.match(r'^[>❯]?\s*\d+\.', stripped):
-            question = stripped
-            continue
-
-        # Detect numbered options - try multiple patterns
-        # Pattern 1: "> 1. Yes" or "❯ 1. Yes" (selected)
-        # Pattern 2: "1. Yes" or "  2. No" (not selected)
-        selected = False
-
-        # Check for selection indicator at start
-        if stripped.startswith('>') or stripped.startswith('❯'):
-            selected = True
-            stripped = stripped[1:].strip()
-
-        # Now try to match "1. Label" or "1. Label, more text"
-        option_match = re.match(r'^(\d+)\.\s+(.+)$', stripped)
-        if option_match:
-            num = int(option_match.group(1))
-            label = option_match.group(2).strip()
-            options.append({
-                'num': num,
-                'label': label,
-                'description': '',
-                'selected': selected
-            })
-            logger.debug(f"[PROMPT] Found option {num}: {label} (selected={selected})")
-            continue
-
-        # If we have a question but no options yet, this might be context
-        # (like the command being shown in Bash prompts)
-        if not question and not options:
-            context_lines.append(stripped)
-            continue
-
-        # Detect option description (indented text after option)
-        if options and stripped and not re.match(r'^\d+\.', stripped):
-            # Add as description to last option
-            if options[-1]['description']:
-                options[-1]['description'] += ' ' + stripped
-            else:
-                options[-1]['description'] = stripped
-
-    if question and options:
-        result = {
-            'question': question,
-            'options': options,
-            'timestamp': datetime.now().isoformat()
-        }
-        # Add title if we have it
-        if prompt_title:
-            result['title'] = prompt_title
-        # Add context if we have it (e.g., the bash command being run)
-        if context_lines:
-            result['context'] = '\n'.join(context_lines)
-
-        logger.info(f"[PROMPT] Parsed: title={prompt_title}, question={question}, options={len(options)}, context_lines={len(context_lines)}")
-        return result
-
-    return None
 
 
 def set_current_prompt(prompt: dict):
@@ -346,292 +196,6 @@ def set_current_prompt(prompt: dict):
         logger.info("[PROMPT] Cleared")
 
 
-def clean_message_text(text: str) -> str:
-    """Clean up message text by removing status lines and separators."""
-    lines = text.split('\n')
-    result_lines = []
-
-    for line in lines:
-        stripped = line.strip()
-
-        # Skip empty lines at the start
-        if not result_lines and not stripped:
-            continue
-
-        # Skip Claude Code status line: [Model] name | In:... Out:... [%] | ...
-        if re.match(r'^\[.+\]\s+\w+\s*\|\s*In:', stripped):
-            continue
-
-        # Skip separator lines (horizontal rules made of various chars)
-        if stripped and re.match(r'^[─━═\-_\s]+$', stripped):
-            continue
-
-        # Regular line - add it
-        if stripped:
-            result_lines.append(stripped)
-
-    # Clean up trailing/leading empty lines
-    while result_lines and not result_lines[-1].strip():
-        result_lines.pop()
-    while result_lines and not result_lines[0].strip():
-        result_lines.pop(0)
-
-    return '\n'.join(result_lines).strip()
-
-
-def extract_conversational_response(claude_text: str) -> str:
-    """Extract only the conversational/human-readable part of Claude's response.
-
-    Filters out tool calls (Bash, Read, etc.) and their outputs.
-    """
-    lines = claude_text.split('\n')
-    result_lines = []
-    in_tool_output = False
-
-    for line in lines:
-        stripped = line.strip()
-
-        # Skip empty lines at the start
-        if not result_lines and not stripped:
-            continue
-
-        # Skip Claude Code status line: [Model] name | In:... Out:... [%] | ...
-        if re.match(r'^\[.+\]\s+\w+\s*\|\s*In:', stripped):
-            continue
-
-        # Skip separator lines (horizontal rules made of various chars)
-        if stripped and re.match(r'^[─━═\-_─\s]+$', stripped):
-            continue
-
-        # Skip thinking/processing status lines like "✱ Grooving… (esc to interrupt)"
-        if re.search(r'\(esc to interrupt', stripped, re.IGNORECASE):
-            continue
-
-        # Skip spinner/status lines with special chars like "✱", "·", "⠋", etc.
-        if re.match(r'^[✱·⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏\*]\s+\w+.*\.\.\.', stripped):
-            continue
-
-        # Handle lines starting with ● (Claude response markers) FIRST
-        if stripped.startswith('●'):
-            content = stripped.lstrip('● ').strip()
-
-            # Skip tool calls
-            if re.match(r'^(Bash|Read|Write|Edit|Glob|Grep|Task|WebFetch|WebSearch|NotebookEdit|TodoRead|TodoWrite|AskFollowupQuestion)\s*\(', content, re.IGNORECASE):
-                in_tool_output = True
-                continue
-
-            # Skip "User answered Claude's questions:" lines
-            if 'User answered' in content and 'question' in content:
-                continue
-
-            # Skip tool output summaries
-            if re.match(r'^(Read|Write|Edit|Glob|Grep)\s+\d+\s+\w+.*\(ctrl\+o', content, re.IGNORECASE):
-                continue
-
-            # This is a conversational response - add it!
-            if content:
-                in_tool_output = False
-                result_lines.append(content)
-            continue
-
-        # Skip tool output summary lines like "Read 1 file (ctrl+o to expand)"
-        if re.match(r'^(Read|Write|Edit|Glob|Grep)\s+\d+\s+\w+.*\(ctrl\+o', stripped, re.IGNORECASE):
-            continue
-
-        # Skip "User answered Claude's questions:" lines (without ●)
-        if 'User answered' in stripped and 'question' in stripped:
-            continue
-
-        # Skip answer lines like "└ · Can I list... → Yes"
-        if re.match(r'^[└├│\s]*[·•]\s*.+\s*→\s*\w+', stripped):
-            continue
-
-        # Skip standalone permission markers
-        if stripped in ('Permission', '□ Permission', '☐ Permission', '■ Permission', '☑ Permission'):
-            continue
-
-        # Skip "Can I run:" lines (part of permission prompt, not chat)
-        if re.match(r'^Can I run:', stripped):
-            continue
-
-        # Skip checkbox/permission box lines
-        if re.match(r'^[□☐■☑]\s+', stripped):
-            continue
-
-        # Check if this line starts a tool call (without ●)
-        if re.match(r'^(Bash|Read|Write|Edit|Glob|Grep|Task|WebFetch|WebSearch|NotebookEdit|TodoRead|TodoWrite|AskFollowupQuestion)\s*\(', stripped, re.IGNORECASE):
-            in_tool_output = True
-            continue
-
-        # Check for tool output continuation markers
-        if re.match(r'^\.\.\.\s*\+\d+\s+lines?\s*\(ctrl\+o', stripped, re.IGNORECASE):
-            in_tool_output = True
-            continue
-
-        # Skip lines that look like command output (have table-like structure)
-        if in_tool_output:
-            # Check if this looks like a conversational sentence (starts with capital, has words)
-            if stripped and re.match(r'^[A-Z][a-z]', stripped) and len(stripped.split()) >= 3:
-                # Might be end of tool output, start collecting
-                in_tool_output = False
-                result_lines.append(stripped)
-            continue
-
-        # Regular line - add it
-        if stripped or result_lines:  # Allow empty lines after we've started
-            result_lines.append(line.rstrip())
-
-    # Clean up trailing empty lines
-    while result_lines and not result_lines[-1].strip():
-        result_lines.pop()
-
-    # Clean up leading empty lines
-    while result_lines and not result_lines[0].strip():
-        result_lines.pop(0)
-
-    return '\n'.join(result_lines).strip()
-
-
-def parse_tmux_messages(output: str) -> list:
-    """Parse tmux output to extract user prompts and Claude responses"""
-    import hashlib
-
-    # Remove ANSI codes
-    clean = re.sub(r'\x1b\[[0-9;]*m', '', output)
-
-    messages = []
-
-    # Split by the prompt marker (❯) to find user messages
-    # Format: "❯ user message" followed by "● claude response"
-    parts = clean.split('❯')
-
-    for part in parts[1:]:  # Skip first part (before any prompt)
-        part = part.strip()
-        if not part:
-            continue
-
-        # Check if there's a Claude response (●)
-        if '●' in part:
-            user_part, claude_part = part.split('●', 1)
-            user_msg = clean_message_text(user_part)
-
-            # Clean up Claude response (stop at next ❯ if present)
-            claude_msg = claude_part.strip()
-
-            # Remove trailing prompt lines and box-drawing chars
-            claude_lines = []
-            for line in claude_msg.split('\n'):
-                stripped = line.strip()
-                # Skip empty lines and box-drawing lines
-                if stripped and not re.match(r'^[─━═\-_\s]+$', stripped):
-                    claude_lines.append(line)
-            claude_msg = '\n'.join(claude_lines).strip()
-
-            # Filter out tool outputs - only keep conversational response
-            claude_msg = extract_conversational_response(claude_msg)
-
-            if user_msg:
-                messages.append(('user', user_msg))
-            if claude_msg:
-                messages.append(('claude', claude_msg))
-        # Note: We intentionally skip user messages without a Claude response (●)
-        # to avoid capturing text while the user is still typing
-
-    return messages
-
-
-def start_tmux_monitor():
-    """Start background thread to monitor tmux session for new messages"""
-    global tmux_monitor_running, last_seen_output, last_seen_hash
-
-    if tmux_monitor_running:
-        return
-
-    tmux_monitor_running = True
-    logger.info("[MONITOR] Starting tmux session monitor")
-
-    def monitor_loop():
-        global last_seen_output, last_seen_hash
-        import hashlib
-
-        seen_messages = set()  # Track seen message hashes to avoid duplicates
-
-        # Initialize with existing chat history
-        for msg in chat_history:
-            msg_hash = hashlib.md5(f"{msg['role']}:{msg['content'][:100]}".encode()).hexdigest()
-            seen_messages.add(msg_hash)
-
-        while tmux_monitor_running:
-            try:
-                if not is_tmux_session_running():
-                    time.sleep(2)
-                    continue
-
-                # Capture current output
-                output = capture_tmux_output()
-                if not output:
-                    time.sleep(1)
-                    continue
-
-                # Check if output changed
-                output_hash = hashlib.md5(output.encode()).hexdigest()
-                if output_hash == last_seen_hash:
-                    time.sleep(0.5)
-                    continue
-
-                last_seen_hash = output_hash
-                last_seen_output = output
-
-                # Check for permission prompts
-                prompt = parse_permission_prompt(output)
-                if prompt != current_prompt:
-                    if prompt and (not current_prompt or prompt['question'] != current_prompt.get('question')):
-                        set_current_prompt(prompt)
-                        set_claude_state('waiting')
-                    elif not prompt and current_prompt:
-                        set_current_prompt(None)
-
-                # Parse messages from output
-                messages = parse_tmux_messages(output)
-
-                # Detect new messages
-                for role, content in messages:
-                    msg_hash = hashlib.md5(f"{role}:{content[:100]}".encode()).hexdigest()
-                    if msg_hash not in seen_messages:
-                        seen_messages.add(msg_hash)
-                        logger.info(f"[MONITOR] New {role} message detected")
-                        add_chat_message(role, content)
-
-                        # Update state based on new messages
-                        if role == 'user' and claude_state['status'] == 'idle':
-                            set_claude_state('thinking')
-                        elif role == 'claude':
-                            set_claude_state('speaking')
-                            # Return to idle after delay
-                            def delayed_idle():
-                                time.sleep(3)
-                                if claude_state['status'] == 'speaking':
-                                    set_claude_state('idle')
-                            threading.Thread(target=delayed_idle, daemon=True).start()
-
-                # Keep seen_messages from growing too large
-                if len(seen_messages) > 200:
-                    # Keep only recent ones (convert to list, slice, back to set)
-                    seen_messages = set(list(seen_messages)[-100:])
-
-            except Exception as e:
-                logger.error(f"[MONITOR] Error: {e}")
-
-            time.sleep(0.5)
-
-    thread = threading.Thread(target=monitor_loop, daemon=True)
-    thread.start()
-
-
-def stop_tmux_monitor():
-    """Stop the tmux monitor"""
-    global tmux_monitor_running
-    tmux_monitor_running = False
 
 
 def text_to_speech(text: str, request_id: str) -> str:
@@ -708,232 +272,6 @@ def transcribe_audio(audio_data: bytes) -> str:
     return transcript
 
 
-def is_tmux_session_running() -> bool:
-    """Check if the Claude tmux session exists"""
-    result = subprocess.run(
-        ['tmux', 'has-session', '-t', CLAUDE_TMUX_SESSION],
-        capture_output=True
-    )
-    return result.returncode == 0
-
-
-def send_to_tmux_session(text: str) -> bool:
-    """Send text to existing Claude tmux session"""
-    try:
-        # Send the text
-        subprocess.run(
-            ['tmux', 'send-keys', '-t', CLAUDE_TMUX_SESSION, text],
-            check=True,
-            timeout=10
-        )
-        # Send Enter (C-m is Ctrl-M which equals Enter)
-        subprocess.run(
-            ['tmux', 'send-keys', '-t', CLAUDE_TMUX_SESSION, 'C-m'],
-            check=True,
-            timeout=10
-        )
-        print(f"[CLAUDE] Sent prompt to tmux session '{CLAUDE_TMUX_SESSION}'")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"[CLAUDE] Failed to send to tmux session: {e}")
-        return False
-    except subprocess.TimeoutExpired:
-        print("[CLAUDE] Timeout sending to tmux session")
-        return False
-
-
-def create_claude_tmux_session(text: str) -> bool:
-    """Create a new tmux session with Claude"""
-    try:
-        # Create new tmux session running claude
-        subprocess.run([
-            'tmux', 'new-session',
-            '-d',  # detached
-            '-s', CLAUDE_TMUX_SESSION,
-            '-c', claude_workdir,
-            'claude', text
-        ], check=True, timeout=10)
-        print(f"[CLAUDE] Created tmux session '{CLAUDE_TMUX_SESSION}' in {claude_workdir}")
-
-        # Open alacritty attached to the session for visibility
-        subprocess.Popen([
-            'alacritty',
-            '--title', f'Claude ({CLAUDE_TMUX_SESSION})',
-            '-e', 'tmux', 'attach-session', '-t', CLAUDE_TMUX_SESSION
-        ])
-        print(f"[CLAUDE] Opened alacritty attached to tmux session")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"[CLAUDE] Failed to create tmux session: {e}")
-        return False
-    except subprocess.TimeoutExpired:
-        print("[CLAUDE] Timeout creating tmux session")
-        return False
-
-
-def capture_tmux_output() -> str:
-    """Capture current tmux pane content"""
-    try:
-        result = subprocess.run(
-            ['tmux', 'capture-pane', '-t', CLAUDE_TMUX_SESSION, '-p', '-S', '-100'],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        return result.stdout if result.returncode == 0 else ""
-    except Exception as e:
-        logger.error(f"Error capturing tmux output: {e}")
-        return ""
-
-
-def strip_ansi(text):
-    """Remove ANSI escape codes from text"""
-    return re.sub(r'\x1b\[[0-9;]*m', '', text)
-
-
-def monitor_claude_response(request_id: str, initial_output: str, prompt_text: str = ""):
-    """Background thread to monitor Claude's response"""
-    logger.info(f"Starting monitor for {request_id}, prompt: {prompt_text[:50]}...")
-
-    # Add waiting step to history
-    add_response_step(request_id, {
-        'name': 'waiting_response',
-        'label': 'Waiting for Claude',
-        'status': 'in_progress',
-        'timestamp': datetime.now().isoformat(),
-        'details': 'Monitoring Claude output...'
-    })
-
-    # Wait a bit for Claude to start processing
-    time.sleep(0.5)
-
-    last_output = initial_output
-    stable_count = 0
-    max_checks = 120  # 60 seconds max
-
-    for i in range(max_checks):
-        time.sleep(0.5)  # Poll every 500ms
-
-        current_output = capture_tmux_output()
-        clean_output = strip_ansi(current_output)
-
-        # Skip if nothing has changed yet
-        if current_output == initial_output:
-            continue
-
-        # Check if Claude is done - look for ❯ prompt at end of output
-        stripped = clean_output.rstrip()
-        if stripped:
-            last_line = stripped.split('\n')[-1]
-            has_bullet = '●' in clean_output
-            has_prompt = '❯' in last_line
-
-            # Debug: log every 10 checks
-            if i % 10 == 0:
-                logger.info(f"Check {i}: has_●={has_bullet} has_❯={has_prompt}")
-                logger.debug(f"last_line: {repr(last_line)}")
-                logger.debug(f"output tail:\n{clean_output[-300:]}")
-
-            # Prompt line contains ❯ and we've seen Claude respond (●)
-            if has_prompt and has_bullet:
-                logger.info(f"Detected ❯ prompt for {request_id}, Claude finished")
-                break
-
-        # Fallback: stability detection (but faster - 2 checks = 1s)
-        if current_output == last_output:
-            stable_count += 1
-            if stable_count >= 2:
-                logger.info(f"Output stable for {request_id} at check {i}, extracting response")
-                break
-        else:
-            stable_count = 0
-            last_output = current_output
-
-    # Extract the response (everything after the prompt)
-    response = extract_claude_response(initial_output, current_output, prompt_text)
-    response_captured_at = datetime.now()
-
-    # Update waiting step to completed
-    update_response_step(request_id, 'waiting_response', {
-        'status': 'completed',
-        'details': f'Response captured ({len(response)} chars)'
-    })
-
-    # Note: Chat messages are now detected by the tmux monitor
-
-    # Check if responses are disabled
-    if response_config['mode'] == 'disabled':
-        claude_responses[request_id] = {
-            'status': 'disabled',
-            'timestamp': datetime.now().isoformat()
-        }
-        add_response_step(request_id, {
-            'name': 'response_disabled',
-            'label': 'Response',
-            'status': 'skipped',
-            'timestamp': datetime.now().isoformat(),
-            'details': 'Responses disabled in settings'
-        })
-        print(f"[MONITOR] Responses disabled, not storing for {request_id}")
-        # Still update state to idle
-        set_claude_state("idle")
-        return
-
-    # Add response captured step
-    add_response_step(request_id, {
-        'name': 'response_captured',
-        'label': 'Response Captured',
-        'status': 'completed',
-        'timestamp': response_captured_at.isoformat(),
-        'details': response[:200] + ('...' if len(response) > 200 else '')
-    })
-
-    # Generate TTS if audio mode
-    audio_path = None
-    if response_config['mode'] == 'audio' and response:
-        add_response_step(request_id, {
-            'name': 'tts_generating',
-            'label': 'Generating Audio',
-            'status': 'in_progress',
-            'timestamp': datetime.now().isoformat(),
-            'details': 'Sending to Deepgram TTS...'
-        })
-
-        audio_path = text_to_speech(response, request_id)
-
-        update_response_step(request_id, 'tts_generating', {
-            'status': 'completed' if audio_path else 'error',
-            'details': 'Audio generated' if audio_path else 'TTS failed'
-        })
-
-    # Add final ready step
-    add_response_step(request_id, {
-        'name': 'response_ready',
-        'label': 'Ready for Watch',
-        'status': 'completed',
-        'timestamp': datetime.now().isoformat(),
-        'details': f'Type: {response_config["mode"]}'
-    })
-
-    claude_responses[request_id] = {
-        'status': 'completed',
-        'response': response,
-        'audio_path': audio_path,
-        'timestamp': datetime.now().isoformat()
-    }
-    print(f"[MONITOR] Response captured for {request_id}: {response[:100]}...")
-
-    # Update state to speaking, then idle after delay
-    set_claude_state("speaking", request_id)
-
-    def return_to_idle():
-        time.sleep(5)
-        if claude_state.get("status") == "speaking":
-            set_claude_state("idle")
-
-    idle_thread = threading.Thread(target=return_to_idle)
-    idle_thread.daemon = True
-    idle_thread.start()
 
 
 def add_response_step(request_id: str, step: dict):
@@ -957,117 +295,204 @@ def update_response_step(request_id: str, step_name: str, updates: dict):
             break
 
 
-def extract_claude_response(before: str, after: str, prompt_text: str = "") -> str:
-    """Extract Claude's response by finding text after the user's prompt"""
-    import re
-
-    if not after:
-        return "No response captured"
-
-    # Remove ANSI escape codes
-    after = re.sub(r'\x1b\[[0-9;]*m', '', after)
-
-    # Strategy: Find the user's prompt in the output, then get Claude's response after it
-    # The format is: "❯ user message" followed by "● claude response"
-
-    if prompt_text:
-        # Find the prompt in the output (might be truncated or slightly different)
-        # Look for first few words of the prompt
-        prompt_words = prompt_text.split()[:5]  # First 5 words
-        search_text = ' '.join(prompt_words)
-
-        # Find where our prompt appears
-        prompt_pos = after.find(search_text)
-        if prompt_pos != -1:
-            # Get everything after the prompt
-            after_prompt = after[prompt_pos + len(search_text):]
-
-            # Look for the ● marker which indicates Claude's response
-            if '●' in after_prompt:
-                response = after_prompt.split('●', 1)[1].strip()
-                # Stop at the next prompt (❯)
-                if '❯' in response:
-                    response = response.split('❯')[0].strip()
-            else:
-                # No ● found, try to get text after the prompt line
-                response = after_prompt.strip()
-                if '❯' in response:
-                    response = response.split('❯')[0].strip()
-        else:
-            # Prompt not found, fall back to old method
-            response = after
-    else:
-        response = after
-
-    # If still have ●, extract after it
-    if '●' in response:
-        response = response.split('●', 1)[1].strip()
-
-    # Stop at next prompt
-    if '❯' in response:
-        response = response.split('❯')[0].strip()
-
-    # Remove lines that are just box-drawing characters (─, ━, ═, etc.)
-    lines = response.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped and not re.match(r'^[─━═\-_\s]+$', stripped):
-            cleaned_lines.append(line)
-    response = '\n'.join(cleaned_lines).strip()
-
-    if not response:
-        return "Response captured but empty"
-
-    return response
 
 
 def run_claude(text: str, request_id: str = None):
-    """Send prompt to Claude via tmux session (creates if needed)"""
-    global last_claude_launch
+    """Run Claude with a prompt using the JSON streaming wrapper."""
+    global last_claude_launch, active_claude_wrapper
     now = time.time()
 
-    # Note: Chat messages are now detected by the tmux monitor
-    # Update state to thinking
-    set_claude_state("thinking", request_id)
-
-    # Capture initial state before sending
-    initial_output = capture_tmux_output() if is_tmux_session_running() else ""
-
-    # Check if tmux session exists
-    if is_tmux_session_running():
-        print(f"[CLAUDE] Reusing existing tmux session '{CLAUDE_TMUX_SESSION}'")
-        if send_to_tmux_session(text):
-            last_claude_launch = now
-            # Start monitoring for response
-            if request_id:
-                claude_responses[request_id] = {'status': 'pending', 'timestamp': datetime.now().isoformat()}
-                thread = threading.Thread(target=monitor_claude_response, args=(request_id, initial_output, text))
-                thread.daemon = True
-                thread.start()
-            return True
-        print("[CLAUDE] Failed to send to existing session")
-        set_claude_state("idle")
-
-    # Cooldown only applies to creating new sessions
+    # Cooldown check
     if now - last_claude_launch < LAUNCH_COOLDOWN:
         print(f"[GUARD] Skipping Claude launch - cooldown active ({LAUNCH_COOLDOWN}s)")
-        set_claude_state("idle")
         return False
 
     last_claude_launch = now
-    success = create_claude_tmux_session(text)
 
-    # Start monitoring for response
-    if success and request_id:
+    # Update state to thinking
+    set_claude_state("thinking", request_id)
+
+    # Add user message to chat
+    add_chat_message("user", text)
+
+    # Mark response as pending
+    if request_id:
         claude_responses[request_id] = {'status': 'pending', 'timestamp': datetime.now().isoformat()}
-        thread = threading.Thread(target=monitor_claude_response, args=(request_id, "", text))
-        thread.daemon = True
-        thread.start()
-    elif not success:
-        set_claude_state("idle")
+        add_response_step(request_id, {
+            'name': 'claude_started',
+            'label': 'Claude Started',
+            'status': 'in_progress',
+            'timestamp': datetime.now().isoformat(),
+            'details': 'Running Claude with JSON streaming...'
+        })
 
-    return success
+    def run_in_thread():
+        global active_claude_wrapper
+        try:
+            # Get model from config if set
+            model = transcription_config.get('claude_model')
+
+            # Use singleton wrapper for persistent process
+            wrapper = ClaudeWrapper.get_instance(claude_workdir, model=model)
+            active_claude_wrapper = wrapper
+
+            accumulated_text = []
+
+            def on_text(text_chunk):
+                accumulated_text.append(text_chunk)
+                # Broadcast text chunk to WebSocket clients
+                broadcast_message({
+                    "type": "text_chunk",
+                    "request_id": request_id,
+                    "text": text_chunk
+                })
+                logger.debug(f"[CLAUDE] Text: {text_chunk[:50]}...")
+
+            def on_tool(name, input_data):
+                logger.info(f"[CLAUDE] Tool: {name}")
+                broadcast_message({
+                    "type": "tool",
+                    "request_id": request_id,
+                    "tool": name
+                })
+
+            def on_result(result):
+                logger.info(f"[CLAUDE] Result: {result[:100]}...")
+
+            def on_usage(usage):
+                logger.info(f"[CLAUDE] Context: {usage['context_percent']}% ({usage['total_context']:,} tokens)")
+                broadcast_message({
+                    "type": "usage",
+                    "input_tokens": usage['input_tokens'],
+                    "output_tokens": usage['output_tokens'],
+                    "cache_read_tokens": usage['cache_read_tokens'],
+                    "cache_creation_tokens": usage['cache_creation_tokens'],
+                    "total_context": usage['total_context'],
+                    "context_window": usage['context_window'],
+                    "context_percent": usage['context_percent'],
+                    "cost_usd": usage['cost_usd']
+                })
+
+            # Run Claude
+            result = wrapper.run(
+                text,
+                on_text=on_text,
+                on_tool=on_tool,
+                on_result=on_result,
+                on_usage=on_usage,
+                show_terminal=True
+            )
+
+            active_claude_wrapper = None
+
+            # Update step
+            if request_id:
+                update_response_step(request_id, 'claude_started', {
+                    'status': 'completed',
+                    'details': f'Claude finished ({len(result)} chars)'
+                })
+
+            # Add Claude's response to chat
+            if result:
+                add_chat_message("claude", result)
+
+            # Handle response based on mode
+            if response_config['mode'] == 'disabled':
+                claude_responses[request_id] = {
+                    'status': 'disabled',
+                    'timestamp': datetime.now().isoformat()
+                }
+                add_response_step(request_id, {
+                    'name': 'response_disabled',
+                    'label': 'Response',
+                    'status': 'skipped',
+                    'timestamp': datetime.now().isoformat(),
+                    'details': 'Responses disabled in settings'
+                })
+                set_claude_state("idle")
+                return
+
+            # Add response captured step
+            add_response_step(request_id, {
+                'name': 'response_captured',
+                'label': 'Response Captured',
+                'status': 'completed',
+                'timestamp': datetime.now().isoformat(),
+                'details': result[:200] + ('...' if len(result) > 200 else '')
+            })
+
+            # Generate TTS if audio mode
+            audio_path = None
+            if response_config['mode'] == 'audio' and result:
+                add_response_step(request_id, {
+                    'name': 'tts_generating',
+                    'label': 'Generating Audio',
+                    'status': 'in_progress',
+                    'timestamp': datetime.now().isoformat(),
+                    'details': 'Sending to Deepgram TTS...'
+                })
+
+                audio_path = text_to_speech(result, request_id)
+
+                update_response_step(request_id, 'tts_generating', {
+                    'status': 'completed' if audio_path else 'error',
+                    'details': 'Audio generated' if audio_path else 'TTS failed'
+                })
+
+            # Add final ready step
+            add_response_step(request_id, {
+                'name': 'response_ready',
+                'label': 'Ready for Watch',
+                'status': 'completed',
+                'timestamp': datetime.now().isoformat(),
+                'details': f'Type: {response_config["mode"]}'
+            })
+
+            claude_responses[request_id] = {
+                'status': 'completed',
+                'response': result,
+                'audio_path': audio_path,
+                'timestamp': datetime.now().isoformat()
+            }
+
+            # Update state
+            set_claude_state("speaking", request_id)
+
+            def return_to_idle():
+                time.sleep(5)
+                if claude_state.get("status") == "speaking":
+                    set_claude_state("idle")
+
+            idle_thread = threading.Thread(target=return_to_idle, daemon=True)
+            idle_thread.start()
+
+        except Exception as e:
+            logger.error(f"[CLAUDE] Error: {e}")
+            import traceback
+            traceback.print_exc()
+
+            if request_id:
+                claude_responses[request_id] = {
+                    'status': 'error',
+                    'error': str(e),
+                    'timestamp': datetime.now().isoformat()
+                }
+                add_response_step(request_id, {
+                    'name': 'error',
+                    'label': 'Error',
+                    'status': 'error',
+                    'timestamp': datetime.now().isoformat(),
+                    'details': str(e)
+                })
+
+            set_claude_state("idle")
+            active_claude_wrapper = None
+
+    # Run in background thread
+    thread = threading.Thread(target=run_in_thread, daemon=True)
+    thread.start()
+
+    return True
 
 
 class DictationHandler(BaseHTTPRequestHandler):
@@ -1120,6 +545,16 @@ class DictationHandler(BaseHTTPRequestHandler):
         # Handle prompt response (selecting an option)
         if self.path == '/api/prompt/respond':
             self.handle_prompt_respond(content_length)
+            return
+
+        # Handle permission request from hook
+        if self.path == '/api/permission/request':
+            self.handle_permission_request(content_length)
+            return
+
+        # Handle permission response from mobile app
+        if self.path == '/api/permission/respond':
+            self.handle_permission_respond(content_length)
             return
 
         print(f"=== Incoming Request ===")
@@ -1269,6 +704,8 @@ class DictationHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({'status': 'ok'}).encode())
         elif self.path.startswith('/api/response/'):
             self.handle_response_check()
+        elif self.path.startswith('/api/permission/status/'):
+            self.handle_permission_status()
         elif self.path.startswith('/api/audio/'):
             self.handle_audio_file()
         elif self.path == '/api/history':
@@ -1517,51 +954,27 @@ class DictationHandler(BaseHTTPRequestHandler):
             }).encode())
 
     def handle_prompt_respond(self, content_length):
-        """Handle POST /api/prompt/respond to answer a permission prompt"""
+        """Handle POST /api/prompt/respond to answer a permission prompt.
+
+        Note: In Phase 1, we use --permission-mode acceptEdits which auto-accepts
+        edit permissions. Interactive permission handling will be added in Phase 2
+        with bidirectional JSON streaming.
+        """
         global current_prompt
         try:
             body = self.rfile.read(content_length)
             data = json.loads(body.decode())
             option_num = data.get('option')
 
-            if not current_prompt:
-                self.send_response(400)
-                self.send_header('Content-Type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    'status': 'error',
-                    'message': 'No active prompt'
-                }).encode())
-                return
-
-            if option_num is None:
-                self.send_response(400)
-                self.send_header('Content-Type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    'status': 'error',
-                    'message': 'No option provided'
-                }).encode())
-                return
-
-            # Send the option number to tmux
-            print(f"[PROMPT] Sending option {option_num} to tmux")
-            success = send_to_tmux_session(str(option_num))
-
-            if success:
-                # Clear current prompt
-                set_current_prompt(None)
-                set_claude_state('thinking')
-
+            # Phase 1: Permission prompts are auto-accepted via --permission-mode acceptEdits
+            # This endpoint is kept for future Phase 2 implementation
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps({
-                'status': 'ok' if success else 'error',
-                'message': 'Option sent' if success else 'Failed to send option'
+                'status': 'ok',
+                'message': 'Permission handling disabled in Phase 1 (auto-accept mode)'
             }).encode())
 
         except json.JSONDecodeError as e:
@@ -1572,6 +985,158 @@ class DictationHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({
                 'status': 'error',
                 'message': f'Invalid JSON: {e}'
+            }).encode())
+
+    def handle_permission_request(self, content_length):
+        """Handle POST /api/permission/request from the permission hook."""
+        try:
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode())
+
+            tool_name = data.get('tool_name', '')
+            tool_input = data.get('tool_input', {})
+            tool_use_id = data.get('tool_use_id', '')
+
+            # Generate request ID
+            request_id = str(uuid.uuid4())[:8]
+
+            # Store pending permission
+            pending_permissions[request_id] = {
+                'tool_name': tool_name,
+                'tool_input': tool_input,
+                'tool_use_id': tool_use_id,
+                'status': 'pending',
+                'decision': None,
+                'reason': None,
+                'timestamp': datetime.now().isoformat()
+            }
+
+            # Format prompt for mobile app
+            if tool_name == 'Bash':
+                command = tool_input.get('command', '')
+                description = tool_input.get('description', '')
+                question = f"Run command: {command}"
+                context = description
+            elif tool_name in ('Write', 'Edit'):
+                file_path = tool_input.get('file_path', '')
+                question = f"{tool_name} file: {file_path}"
+                context = tool_input.get('content', tool_input.get('new_string', ''))[:200]
+            else:
+                question = f"Execute {tool_name}"
+                context = json.dumps(tool_input)[:200]
+
+            # Broadcast to mobile app
+            broadcast_message({
+                'type': 'permission',
+                'request_id': request_id,
+                'tool_name': tool_name,
+                'question': question,
+                'context': context,
+                'options': [
+                    {'num': 1, 'label': 'Allow', 'description': 'Permit this operation'},
+                    {'num': 2, 'label': 'Deny', 'description': 'Block this operation'},
+                ]
+            })
+
+            logger.info(f"[PERMISSION] Request {request_id}: {tool_name} - {question[:50]}...")
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                'status': 'ok',
+                'request_id': request_id
+            }).encode())
+
+        except Exception as e:
+            logger.error(f"[PERMISSION] Request error: {e}")
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                'status': 'error',
+                'message': str(e)
+            }).encode())
+
+    def handle_permission_status(self):
+        """Handle GET /api/permission/status/<id> - hook polls for decision."""
+        request_id = self.path.split('/')[-1]
+
+        if request_id not in pending_permissions:
+            self.send_response(404)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                'status': 'not_found'
+            }).encode())
+            return
+
+        perm = pending_permissions[request_id]
+
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(json.dumps({
+            'status': perm['status'],
+            'decision': perm['decision'],
+            'reason': perm['reason']
+        }).encode())
+
+    def handle_permission_respond(self, content_length):
+        """Handle POST /api/permission/respond - mobile app approves/denies."""
+        try:
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode())
+
+            request_id = data.get('request_id', '')
+            decision = data.get('decision', 'deny')  # 'allow' or 'deny'
+            reason = data.get('reason', '')
+
+            if request_id not in pending_permissions:
+                self.send_response(404)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    'status': 'not_found'
+                }).encode())
+                return
+
+            # Update permission status
+            pending_permissions[request_id]['status'] = 'resolved'
+            pending_permissions[request_id]['decision'] = decision
+            pending_permissions[request_id]['reason'] = reason
+
+            logger.info(f"[PERMISSION] Response {request_id}: {decision}")
+
+            # Broadcast resolution
+            broadcast_message({
+                'type': 'permission_resolved',
+                'request_id': request_id,
+                'decision': decision
+            })
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                'status': 'ok'
+            }).encode())
+
+        except Exception as e:
+            logger.error(f"[PERMISSION] Response error: {e}")
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                'status': 'error',
+                'message': str(e)
             }).encode())
 
     def handle_audio_file(self):
@@ -1692,6 +1257,65 @@ def run_websocket_server():
     loop.run_until_complete(start_websocket_server())
 
 
+def check_hooks_configured(workdir: str):
+    """Check if permission hooks are configured and warn if not."""
+    hook_script = os.path.join(os.path.dirname(__file__), 'permission_hook.py')
+
+    # Check project-level settings
+    project_settings = os.path.join(workdir, '.claude', 'settings.json')
+
+    # Check user-level settings
+    user_settings = os.path.expanduser('~/.claude/settings.json')
+
+    hook_found = False
+
+    for settings_path in [project_settings, user_settings]:
+        if os.path.exists(settings_path):
+            try:
+                with open(settings_path) as f:
+                    settings = json.load(f)
+                hooks = settings.get('hooks', {}).get('PreToolUse', [])
+                for hook_config in hooks:
+                    hook_list = hook_config.get('hooks', [])
+                    for h in hook_list:
+                        if 'permission_hook' in h.get('command', ''):
+                            hook_found = True
+                            print(f"[HOOKS] Permission hook found in {settings_path}")
+                            break
+            except Exception as e:
+                logger.warning(f"[HOOKS] Error reading {settings_path}: {e}")
+
+    if not hook_found:
+        print("\n" + "=" * 60)
+        print("WARNING: Permission hooks not configured!")
+        print("=" * 60)
+        print("Mobile app permission prompts will NOT work without hooks.")
+        print(f"\nTo enable, create {project_settings} with:")
+        print('''
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "''' + hook_script + '''",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}
+''')
+        print("=" * 60 + "\n")
+
+    # Also check if hook script exists
+    if not os.path.exists(hook_script):
+        print(f"WARNING: Hook script not found at {hook_script}")
+
+
 def main():
     global claude_workdir
 
@@ -1712,12 +1336,12 @@ def main():
 
     claude_workdir = folder
 
+    # Check if permission hooks are configured
+    check_hooks_configured(folder)
+
     # Start WebSocket server in background thread
     ws_thread = threading.Thread(target=run_websocket_server, daemon=True)
     ws_thread.start()
-
-    # Start tmux monitor in background thread
-    start_tmux_monitor()
 
     server = HTTPServer(('0.0.0.0', PORT), DictationHandler)
     print(f"Dictation receiver listening on port {PORT}")
