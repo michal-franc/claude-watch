@@ -79,6 +79,17 @@ Long-press the app icon or access Settings:
 | `/api/response/<id>` | GET | Poll for response |
 | `/api/response/<id>/ack` | POST | Confirm receipt |
 | `/api/audio/<id>` | GET | Download audio response |
+| `/api/permission/respond` | POST | Send permission decision |
+| `ws://:5567/ws` | WebSocket | Real-time permission prompts |
+
+## Permission Prompts
+
+The watch connects via WebSocket to receive permission requests when Claude needs approval for sensitive operations.
+
+- **Allow** - Permit the operation (green button)
+- **Deny** - Block the operation (red button)
+
+Permission prompts show the tool name and action description. The watch vibrates when a prompt arrives.
 
 ## Audio Format
 
