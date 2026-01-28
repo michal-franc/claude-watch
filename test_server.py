@@ -72,48 +72,54 @@ class TestRunClaude:
         server.last_claude_launch = 0
         server.claude_workdir = "/tmp"
 
-    @patch("server.subprocess.Popen")
-    @patch("server.subprocess.run")
-    def test_run_claude_creates_tmux_session(self, mock_run, mock_popen):
-        """Should create tmux session with claude"""
+    @patch("server.ClaudeWrapper")
+    def test_run_claude_uses_wrapper(self, mock_wrapper_class):
+        """Should use ClaudeWrapper to run Claude"""
         server.claude_workdir = "/home/user/project"
-        # Mock tmux has-session to return not found (session doesn't exist)
-        mock_run.return_value.returncode = 1
+        mock_wrapper = MagicMock()
+        mock_wrapper.run.return_value = "test response"
+        mock_wrapper.last_usage = None
+        mock_wrapper_class.get_instance.return_value = mock_wrapper
 
         result = server.run_claude("test prompt")
 
         assert result is True
-        # Check tmux new-session was called
-        calls = [str(c) for c in mock_run.call_args_list]
-        assert any('new-session' in c for c in calls)
+        mock_wrapper_class.get_instance.assert_called()
 
-    @patch("server.subprocess.Popen")
-    @patch("server.subprocess.run")
-    def test_run_claude_reuses_tmux_session(self, mock_run, mock_popen):
-        """Should reuse existing tmux session"""
-        server.claude_workdir = "/home/user/project"
-        # Mock tmux has-session to return success (session exists)
-        mock_run.return_value.returncode = 0
-
-        result = server.run_claude("test prompt")
-
-        assert result is True
-        # Check tmux send-keys was called
-        calls = [str(c) for c in mock_run.call_args_list]
-        assert any('send-keys' in c for c in calls)
-
-    @patch("server.subprocess.Popen")
-    @patch("server.subprocess.run")
-    def test_run_claude_cooldown_blocks_new_session(self, mock_run, mock_popen):
+    @patch("server.ClaudeWrapper")
+    def test_run_claude_cooldown_blocks(self, mock_wrapper_class):
         """Should block new session within cooldown period"""
-        # First call - no session exists
-        mock_run.return_value.returncode = 1
+        mock_wrapper = MagicMock()
+        mock_wrapper.run.return_value = "response"
+        mock_wrapper.last_usage = None
+        mock_wrapper_class.get_instance.return_value = mock_wrapper
+
+        # First call
         server.run_claude("first prompt")
 
-        # Second call - still no session, but cooldown active
+        # Second call - cooldown active
         result = server.run_claude("second prompt")
 
         assert result is False
+
+    @patch("server.ClaudeWrapper")
+    def test_run_claude_passes_model(self, mock_wrapper_class):
+        """Should pass model from config to wrapper"""
+        server.claude_workdir = "/home/user/project"
+        server.transcription_config['claude_model'] = 'opus'
+        mock_wrapper = MagicMock()
+        mock_wrapper.run.return_value = "response"
+        mock_wrapper.last_usage = None
+        mock_wrapper_class.get_instance.return_value = mock_wrapper
+
+        server.run_claude("test prompt")
+
+        mock_wrapper_class.get_instance.assert_called_with(
+            "/home/user/project", model='opus'
+        )
+
+        # Cleanup
+        server.transcription_config['claude_model'] = None
 
 
 class TestDictationHandler:
@@ -152,7 +158,10 @@ class TestDictationHandler:
         handler.do_POST()
 
         mock_transcribe.assert_called_once()
-        mock_run_claude.assert_called_once_with("hello world")
+        mock_run_claude.assert_called_once()
+        # Check first argument is the transcript (second is request_id)
+        call_args = mock_run_claude.call_args[0]
+        assert call_args[0] == "hello world"
 
         response = handler.wfile.getvalue()
         data = json.loads(response)
@@ -327,3 +336,222 @@ class TestMainArgumentParsing:
                     pass
 
                 assert server.claude_workdir == home
+
+
+class TestPermissionEndpoints:
+    """Tests for permission handling endpoints"""
+
+    def setup_method(self):
+        """Reset pending permissions before each test"""
+        server.pending_permissions = {}
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    @patch('server.broadcast_message')
+    def test_permission_request_creates_pending(self, mock_broadcast):
+        """Should create pending permission and broadcast"""
+        handler = server.DictationHandler()
+        handler.path = '/api/permission/request'
+        handler.headers = {'Content-Length': '100'}
+        handler.rfile = BytesIO(json.dumps({
+            'tool_name': 'Bash',
+            'tool_input': {'command': 'rm test'},
+            'tool_use_id': 'tool123'
+        }).encode())
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_permission_request(100)
+
+        # Check response
+        handler.send_response.assert_called_with(200)
+        response = json.loads(handler.wfile.getvalue())
+        assert response['status'] == 'ok'
+        assert 'request_id' in response
+
+        # Check pending permission created
+        request_id = response['request_id']
+        assert request_id in server.pending_permissions
+        assert server.pending_permissions[request_id]['tool_name'] == 'Bash'
+        assert server.pending_permissions[request_id]['status'] == 'pending'
+
+        # Check broadcast
+        mock_broadcast.assert_called_once()
+        broadcast_data = mock_broadcast.call_args[0][0]
+        assert broadcast_data['type'] == 'permission'
+        assert broadcast_data['request_id'] == request_id
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    def test_permission_status_pending(self):
+        """Should return pending status"""
+        server.pending_permissions['test123'] = {
+            'tool_name': 'Bash',
+            'status': 'pending',
+            'decision': None,
+            'reason': None
+        }
+
+        handler = server.DictationHandler()
+        handler.path = '/api/permission/status/test123'
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_permission_status()
+
+        response = json.loads(handler.wfile.getvalue())
+        assert response['status'] == 'pending'
+        assert response['decision'] is None
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    def test_permission_status_resolved(self):
+        """Should return resolved status with decision"""
+        server.pending_permissions['test456'] = {
+            'tool_name': 'Write',
+            'status': 'resolved',
+            'decision': 'allow',
+            'reason': 'User approved'
+        }
+
+        handler = server.DictationHandler()
+        handler.path = '/api/permission/status/test456'
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_permission_status()
+
+        response = json.loads(handler.wfile.getvalue())
+        assert response['status'] == 'resolved'
+        assert response['decision'] == 'allow'
+        assert response['reason'] == 'User approved'
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    def test_permission_status_not_found(self):
+        """Should return 404 for unknown request"""
+        handler = server.DictationHandler()
+        handler.path = '/api/permission/status/unknown'
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_permission_status()
+
+        handler.send_response.assert_called_with(404)
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    @patch('server.broadcast_message')
+    def test_permission_respond_allow(self, mock_broadcast):
+        """Should update permission to allowed"""
+        server.pending_permissions['test789'] = {
+            'tool_name': 'Bash',
+            'status': 'pending',
+            'decision': None,
+            'reason': None
+        }
+
+        handler = server.DictationHandler()
+        handler.path = '/api/permission/respond'
+        handler.headers = {'Content-Length': '100'}
+        handler.rfile = BytesIO(json.dumps({
+            'request_id': 'test789',
+            'decision': 'allow',
+            'reason': 'User approved'
+        }).encode())
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_permission_respond(100)
+
+        handler.send_response.assert_called_with(200)
+        assert server.pending_permissions['test789']['status'] == 'resolved'
+        assert server.pending_permissions['test789']['decision'] == 'allow'
+
+        # Check broadcast
+        mock_broadcast.assert_called_once()
+        broadcast_data = mock_broadcast.call_args[0][0]
+        assert broadcast_data['type'] == 'permission_resolved'
+        assert broadcast_data['decision'] == 'allow'
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    @patch('server.broadcast_message')
+    def test_permission_respond_deny(self, mock_broadcast):
+        """Should update permission to denied"""
+        server.pending_permissions['testdeny'] = {
+            'tool_name': 'Write',
+            'status': 'pending',
+            'decision': None,
+            'reason': None
+        }
+
+        handler = server.DictationHandler()
+        handler.path = '/api/permission/respond'
+        handler.headers = {'Content-Length': '100'}
+        handler.rfile = BytesIO(json.dumps({
+            'request_id': 'testdeny',
+            'decision': 'deny',
+            'reason': 'Too dangerous'
+        }).encode())
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_permission_respond(100)
+
+        assert server.pending_permissions['testdeny']['decision'] == 'deny'
+        assert server.pending_permissions['testdeny']['reason'] == 'Too dangerous'
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    def test_permission_respond_not_found(self):
+        """Should return 404 for unknown request"""
+        handler = server.DictationHandler()
+        handler.path = '/api/permission/respond'
+        handler.headers = {'Content-Length': '100'}
+        handler.rfile = BytesIO(json.dumps({
+            'request_id': 'unknown',
+            'decision': 'allow'
+        }).encode())
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_permission_respond(100)
+
+        handler.send_response.assert_called_with(404)
+
+
+class TestCheckHooksConfigured:
+    """Tests for check_hooks_configured function"""
+
+    def test_hooks_found_in_project(self, tmp_path):
+        """Should find hooks in project settings"""
+        # Create project settings with hook
+        claude_dir = tmp_path / '.claude'
+        claude_dir.mkdir()
+        settings = claude_dir / 'settings.json'
+        settings.write_text(json.dumps({
+            'hooks': {
+                'PreToolUse': [{
+                    'hooks': [{'command': '/path/to/permission_hook.py'}]
+                }]
+            }
+        }))
+
+        # Should not raise, just print
+        server.check_hooks_configured(str(tmp_path))
+
+    def test_hooks_not_found_warns(self, tmp_path, capsys):
+        """Should warn when no hooks configured"""
+        server.check_hooks_configured(str(tmp_path))
+
+        captured = capsys.readouterr()
+        assert 'WARNING' in captured.out
+        assert 'hooks not configured' in captured.out.lower()
