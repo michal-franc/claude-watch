@@ -5,124 +5,153 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@android:color/black"
-    android:padding="8dp">
+    android:padding="4dp">
 
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         app:boxedEdges="all">
 
-        <!-- Settings button in top right -->
-        <ImageButton
-            android:id="@+id/settingsButton"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:layout_gravity="top|end"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:src="@drawable/ic_settings"
-            android:contentDescription="Settings"
-            android:tint="@android:color/darker_gray" />
-
+        <!-- Connection bar at top -->
         <LinearLayout
+            android:id="@+id/connectionBar"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:orientation="vertical"
-            android:gravity="center">
+            android:layout_height="wrap_content"
+            android:layout_gravity="top"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp">
+
+            <View
+                android:id="@+id/connectionDot"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
+                android:background="@android:color/holo_red_light" />
 
             <TextView
-                android:id="@+id/statusText"
-                android:layout_width="wrap_content"
+                android:id="@+id/connectionText"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:text="Tap to record"
-                android:textColor="@android:color/white"
-                android:textSize="14sp"
-                android:textAlignment="center"
-                android:layout_marginBottom="16dp" />
+                android:layout_weight="1"
+                android:text="Disconnected"
+                android:textColor="@android:color/darker_gray"
+                android:textSize="10sp"
+                android:layout_marginStart="4dp" />
 
-            <!-- Normal state: Record button -->
+            <ImageButton
+                android:id="@+id/settingsButton"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_settings"
+                android:contentDescription="Settings"
+                android:tint="@android:color/darker_gray"
+                android:scaleType="fitCenter"
+                android:padding="4dp" />
+
+        </LinearLayout>
+
+        <!-- Chat RecyclerView in middle -->
+        <androidx.wear.widget.WearableRecyclerView
+            android:id="@+id/chatRecyclerView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_marginTop="28dp"
+            android:layout_marginBottom="80dp"
+            android:clipToPadding="false"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp" />
+
+        <!-- Record button at bottom center -->
+        <Button
+            android:id="@+id/recordButton"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:layout_gravity="bottom|center_horizontal"
+            android:text="Record"
+            android:textSize="12sp"
+            android:textColor="@android:color/white"
+            android:background="@drawable/round_button"
+            android:stateListAnimator="@null" />
+
+        <!-- Abort button at bottom center (hidden) -->
+        <Button
+            android:id="@+id/abortButton"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:layout_gravity="bottom|center_horizontal"
+            android:text="Abort"
+            android:textSize="12sp"
+            android:textColor="@android:color/white"
+            android:background="@drawable/round_button"
+            android:backgroundTint="@android:color/holo_orange_dark"
+            android:stateListAnimator="@null"
+            android:visibility="gone" />
+
+        <!-- Audio playback controls at bottom (hidden) -->
+        <LinearLayout
+            android:id="@+id/audioControls"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:visibility="gone">
+
             <Button
-                android:id="@+id/recordButton"
-                android:layout_width="100dp"
-                android:layout_height="100dp"
-                android:text="Record"
-                android:textSize="14sp"
-                android:textColor="@android:color/white"
-                android:background="@drawable/round_button"
-                android:stateListAnimator="@null" />
-
-            <!-- Waiting state: Abort button -->
-            <Button
-                android:id="@+id/abortButton"
-                android:layout_width="100dp"
-                android:layout_height="100dp"
-                android:text="Abort"
-                android:textSize="14sp"
-                android:textColor="@android:color/white"
-                android:background="@drawable/round_button"
-                android:backgroundTint="@android:color/holo_orange_dark"
-                android:stateListAnimator="@null"
-                android:visibility="gone" />
-
-            <!-- Audio playback controls -->
-            <LinearLayout
-                android:id="@+id/audioControls"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center"
-                android:visibility="gone">
-
-                <Button
-                    android:id="@+id/replayButton"
-                    android:layout_width="70dp"
-                    android:layout_height="70dp"
-                    android:text="Replay"
-                    android:textSize="11sp"
-                    android:textColor="@android:color/white"
-                    android:background="@drawable/round_button"
-                    android:backgroundTint="@android:color/holo_green_dark"
-                    android:stateListAnimator="@null"
-                    android:layout_marginEnd="8dp" />
-
-                <Button
-                    android:id="@+id/pauseButton"
-                    android:layout_width="70dp"
-                    android:layout_height="70dp"
-                    android:text="Pause"
-                    android:textSize="11sp"
-                    android:textColor="@android:color/white"
-                    android:background="@drawable/round_button"
-                    android:backgroundTint="@android:color/holo_blue_dark"
-                    android:stateListAnimator="@null" />
-
-            </LinearLayout>
-
-            <!-- Done button (after audio finishes) -->
-            <Button
-                android:id="@+id/doneButton"
-                android:layout_width="100dp"
-                android:layout_height="100dp"
-                android:text="Done"
-                android:textSize="14sp"
+                android:id="@+id/replayButton"
+                android:layout_width="60dp"
+                android:layout_height="60dp"
+                android:text="Replay"
+                android:textSize="10sp"
                 android:textColor="@android:color/white"
                 android:background="@drawable/round_button"
                 android:backgroundTint="@android:color/holo_green_dark"
                 android:stateListAnimator="@null"
-                android:visibility="gone" />
+                android:layout_marginEnd="8dp" />
 
-            <ProgressBar
-                android:id="@+id/progressBar"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:visibility="gone"
-                android:indeterminateTint="@android:color/holo_blue_light" />
+            <Button
+                android:id="@+id/pauseButton"
+                android:layout_width="60dp"
+                android:layout_height="60dp"
+                android:text="Pause"
+                android:textSize="10sp"
+                android:textColor="@android:color/white"
+                android:background="@drawable/round_button"
+                android:backgroundTint="@android:color/holo_blue_dark"
+                android:stateListAnimator="@null" />
 
         </LinearLayout>
 
-        <!-- Permission prompt overlay -->
+        <!-- Done button at bottom (hidden) -->
+        <Button
+            android:id="@+id/doneButton"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:layout_gravity="bottom|center_horizontal"
+            android:text="Done"
+            android:textSize="12sp"
+            android:textColor="@android:color/white"
+            android:background="@drawable/round_button"
+            android:backgroundTint="@android:color/holo_green_dark"
+            android:stateListAnimator="@null"
+            android:visibility="gone" />
+
+        <!-- Progress bar (hidden) -->
+        <ProgressBar
+            android:id="@+id/progressBar"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:visibility="gone"
+            android:indeterminateTint="@android:color/holo_blue_light" />
+
+        <!-- Prompt overlay (full-screen, hidden) -->
         <LinearLayout
-            android:id="@+id/permissionPrompt"
+            android:id="@+id/promptOverlay"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:orientation="vertical"
@@ -132,57 +161,54 @@
             android:visibility="gone">
 
             <TextView
-                android:id="@+id/permissionTitle"
+                android:id="@+id/promptTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Permission"
                 android:textColor="@android:color/holo_orange_light"
                 android:textSize="12sp"
                 android:textStyle="bold"
-                android:layout_marginBottom="4dp" />
+                android:layout_marginBottom="2dp" />
 
             <TextView
-                android:id="@+id/permissionQuestion"
+                android:id="@+id/promptContext"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#AAAAAA"
+                android:textSize="9sp"
+                android:textAlignment="center"
+                android:maxLines="3"
+                android:ellipsize="end"
+                android:visibility="gone"
+                android:layout_marginBottom="2dp" />
+
+            <TextView
+                android:id="@+id/promptQuestion"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Allow action?"
                 android:textColor="@android:color/white"
                 android:textSize="11sp"
                 android:textAlignment="center"
-                android:maxLines="3"
+                android:maxLines="4"
                 android:ellipsize="end"
-                android:layout_marginBottom="8dp" />
+                android:layout_marginBottom="6dp" />
 
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center">
+            <ScrollView
+                android:id="@+id/promptOptionsScroll"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:fillViewport="true">
 
-                <Button
-                    android:id="@+id/allowButton"
-                    android:layout_width="70dp"
-                    android:layout_height="50dp"
-                    android:text="Allow"
-                    android:textSize="11sp"
-                    android:textColor="@android:color/white"
-                    android:background="@drawable/round_button"
-                    android:backgroundTint="@android:color/holo_green_dark"
-                    android:stateListAnimator="@null"
-                    android:layout_marginEnd="8dp" />
+                <LinearLayout
+                    android:id="@+id/promptOptionsContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center" />
 
-                <Button
-                    android:id="@+id/denyButton"
-                    android:layout_width="70dp"
-                    android:layout_height="50dp"
-                    android:text="Deny"
-                    android:textSize="11sp"
-                    android:textColor="@android:color/white"
-                    android:background="@drawable/round_button"
-                    android:backgroundTint="@android:color/holo_red_dark"
-                    android:stateListAnimator="@null" />
-
-            </LinearLayout>
+            </ScrollView>
 
         </LinearLayout>
 
