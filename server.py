@@ -295,6 +295,17 @@ def update_response_step(request_id: str, step_name: str, updates: dict):
             break
 
 
+def update_permission_step(claude_request_id: str, permission_request_id: str, updates: dict):
+    """Update a permission step in request history by permission_request_id"""
+    for entry in request_history:
+        if entry.get('request_id') == claude_request_id:
+            for step in entry.get('steps', []):
+                if step.get('permission_request_id') == permission_request_id:
+                    step.update(updates)
+                    break
+            break
+
+
 
 
 def run_claude(text: str, request_id: str = None):
@@ -392,9 +403,20 @@ def run_claude(text: str, request_id: str = None):
                     'details': f'Claude finished ({len(result)} chars)'
                 })
 
-            # Add Claude's response to chat
+            # Add Claude's response to chat (broadcasts via WebSocket)
             if result:
                 add_chat_message("claude", result)
+
+                # Track that the response was broadcast to connected devices
+                if request_id:
+                    client_count = len(websocket_clients)
+                    add_response_step(request_id, {
+                        'name': 'response_broadcast',
+                        'label': 'Response Sent',
+                        'status': 'completed',
+                        'timestamp': datetime.now().isoformat(),
+                        'details': f'Broadcast to {client_count} client{"s" if client_count != 1 else ""} via WebSocket'
+                    })
 
             # Handle response based on mode
             if response_config['mode'] == 'disabled':
@@ -402,13 +424,6 @@ def run_claude(text: str, request_id: str = None):
                     'status': 'disabled',
                     'timestamp': datetime.now().isoformat()
                 }
-                add_response_step(request_id, {
-                    'name': 'response_disabled',
-                    'label': 'Response',
-                    'status': 'skipped',
-                    'timestamp': datetime.now().isoformat(),
-                    'details': 'Responses disabled in settings'
-                })
                 set_claude_state("idle")
                 return
 
@@ -588,7 +603,7 @@ class DictationHandler(BaseHTTPRequestHandler):
             'steps': [
                 {
                     'name': 'received',
-                    'label': 'Received',
+                    'label': 'Watch',
                     'status': 'completed',
                     'timestamp': received_at.isoformat(),
                     'details': f'{content_length} bytes, {content_type}'
@@ -623,6 +638,12 @@ class DictationHandler(BaseHTTPRequestHandler):
                 'details': transcript if transcript else 'No speech detected'
             })
 
+            # Insert into history BEFORE launching Claude so run_claude()
+            # can add steps (claude_started, permissions, etc.) to this entry
+            request_history.insert(0, entry)
+            if len(request_history) > MAX_HISTORY:
+                request_history.pop()
+
             # Step 4: Claude
             claude_at = datetime.now()
             if transcript:
@@ -645,11 +666,6 @@ class DictationHandler(BaseHTTPRequestHandler):
                     'timestamp': claude_at.isoformat(),
                     'details': 'Skipped (no speech)'
                 })
-
-            # Add to history
-            request_history.insert(0, entry)
-            if len(request_history) > MAX_HISTORY:
-                request_history.pop()
 
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -685,9 +701,13 @@ class DictationHandler(BaseHTTPRequestHandler):
                         'details': str(e)
                     })
 
-            request_history.insert(0, entry)
-            if len(request_history) > MAX_HISTORY:
-                request_history.pop()
+            # Entry already in request_history (inserted before Claude launch)
+            # If error happened before that insert (early in try block),
+            # add it now as a fallback
+            if entry not in request_history:
+                request_history.insert(0, entry)
+                if len(request_history) > MAX_HISTORY:
+                    request_history.pop()
 
             self.send_response(500)
             self.send_header('Content-Type', 'application/json')
@@ -947,13 +967,19 @@ class DictationHandler(BaseHTTPRequestHandler):
                 'steps': [
                     {
                         'name': 'received',
-                        'label': 'Received',
+                        'label': 'Phone',
                         'status': 'completed',
                         'timestamp': received_at.isoformat(),
                         'details': f'Text message: {len(text)} chars'
                     }
                 ]
             }
+
+            # Insert into history BEFORE launching Claude so run_claude()
+            # can add steps (claude_started, permissions, etc.) to this entry
+            request_history.insert(0, entry)
+            if len(request_history) > MAX_HISTORY:
+                request_history.pop()
 
             # Launch Claude with the text
             launched = run_claude(text, request_id)
@@ -971,10 +997,6 @@ class DictationHandler(BaseHTTPRequestHandler):
             else:
                 entry['status'] = 'error'
                 entry['error'] = 'Failed to launch Claude'
-
-            request_history.insert(0, entry)
-            if len(request_history) > MAX_HISTORY:
-                request_history.pop()
 
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -1043,6 +1065,9 @@ class DictationHandler(BaseHTTPRequestHandler):
             # Generate request ID
             request_id = str(uuid.uuid4())[:8]
 
+            # Link to the current active Claude request
+            claude_request_id = claude_state.get("current_request_id")
+
             # Store pending permission
             pending_permissions[request_id] = {
                 'tool_name': tool_name,
@@ -1051,7 +1076,8 @@ class DictationHandler(BaseHTTPRequestHandler):
                 'status': 'pending',
                 'decision': None,
                 'reason': None,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now().isoformat(),
+                'claude_request_id': claude_request_id
             }
 
             # Format prompt for mobile app
@@ -1100,6 +1126,17 @@ class DictationHandler(BaseHTTPRequestHandler):
             })
 
             logger.info(f"[PERMISSION] Request {request_id}: {tool_name} - {question[:50]}...")
+
+            # Add permission step to the current active request's workflow
+            if claude_request_id:
+                add_response_step(claude_request_id, {
+                    'name': 'permission',
+                    'label': f'Permission: {tool_name}',
+                    'status': 'in_progress',
+                    'timestamp': datetime.now().isoformat(),
+                    'details': question,
+                    'permission_request_id': request_id
+                })
 
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -1168,11 +1205,26 @@ class DictationHandler(BaseHTTPRequestHandler):
                 return
 
             # Update permission status
-            pending_permissions[request_id]['status'] = 'resolved'
-            pending_permissions[request_id]['decision'] = decision
-            pending_permissions[request_id]['reason'] = reason
+            perm = pending_permissions[request_id]
+            perm['status'] = 'resolved'
+            perm['decision'] = decision
+            perm['reason'] = reason
+            perm['resolved_at'] = datetime.now().isoformat()
 
             logger.info(f"[PERMISSION] Response {request_id}: {decision}")
+
+            # Update the permission step in request history
+            claude_request_id = perm.get('claude_request_id')
+            if claude_request_id:
+                requested_at = datetime.fromisoformat(perm['timestamp'])
+                resolved_at = datetime.now()
+                duration_ms = int((resolved_at - requested_at).total_seconds() * 1000)
+                tool_name = perm.get('tool_name', 'unknown')
+                update_permission_step(claude_request_id, request_id, {
+                    'status': 'completed' if decision == 'allow' else 'error',
+                    'details': f'{decision}: {tool_name}',
+                    'duration_ms': duration_ms
+                })
 
             # Clear current_prompt if it matches this permission
             if current_prompt and current_prompt.get('request_id') == request_id:

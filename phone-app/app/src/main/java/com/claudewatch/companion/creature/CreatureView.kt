@@ -7,6 +7,7 @@ import android.util.AttributeSet
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.LinearInterpolator
+import android.view.animation.OvershootInterpolator
 import com.claudewatch.companion.R
 import kotlin.math.cos
 import kotlin.math.sin
@@ -22,6 +23,20 @@ class CreatureView @JvmOverloads constructor(
     private var breathingProgress = 0f
     private var blinkProgress = 0f
     private var thinkingBubbleProgress = 0f
+
+    // Smooth transition properties (interpolated between states)
+    private var earAngle = 0f
+    private var targetEarAngle = 0f
+    private var pupilOffsetX = 0f
+    private var pupilOffsetY = 0f
+    private var targetPupilOffsetX = 0f
+    private var targetPupilOffsetY = 0f
+    private var eyeClosure = 0f
+    private var targetEyeClosure = 0f
+    private var bodyGrayAmount = 0f
+    private var targetBodyGrayAmount = 0f
+
+    private var stateTransitionAnimator: ValueAnimator? = null
 
     // Paints
     private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -141,7 +156,50 @@ class CreatureView @JvmOverloads constructor(
             else -> thinkingAnimator.cancel()
         }
 
-        invalidate()
+        // Set targets based on new state
+        targetEarAngle = when (state) {
+            CreatureState.LISTENING -> -20f
+            CreatureState.OFFLINE -> 30f
+            CreatureState.SLEEPING -> 20f
+            else -> 0f
+        }
+        targetPupilOffsetX = 0f
+        targetPupilOffsetY = when (state) {
+            CreatureState.LISTENING -> -2f
+            CreatureState.OFFLINE -> 4f
+            else -> 0f
+        }
+        targetEyeClosure = when (state) {
+            CreatureState.SLEEPING, CreatureState.THINKING -> 1f
+            else -> 0f
+        }
+        targetBodyGrayAmount = when (state) {
+            CreatureState.OFFLINE -> 1f
+            else -> 0f
+        }
+
+        // Animate from current values to targets
+        val startEar = earAngle
+        val startPupilX = pupilOffsetX
+        val startPupilY = pupilOffsetY
+        val startEyeClosure = eyeClosure
+        val startGray = bodyGrayAmount
+
+        stateTransitionAnimator?.cancel()
+        stateTransitionAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 350
+            interpolator = AccelerateDecelerateInterpolator()
+            addUpdateListener { animator ->
+                val t = animator.animatedValue as Float
+                earAngle = startEar + (targetEarAngle - startEar) * t
+                pupilOffsetX = startPupilX + (targetPupilOffsetX - startPupilX) * t
+                pupilOffsetY = startPupilY + (targetPupilOffsetY - startPupilY) * t
+                eyeClosure = startEyeClosure + (targetEyeClosure - startEyeClosure) * t
+                bodyGrayAmount = startGray + (targetBodyGrayAmount - startGray) * t
+                invalidate()
+            }
+            start()
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -208,15 +266,8 @@ class CreatureView @JvmOverloads constructor(
         val earRadius = radius * 0.2f
         val earOffset = radius * 0.7f
 
-        // Ear angle based on state
-        val earAngle = when (currentState) {
-            CreatureState.LISTENING -> -20f
-            CreatureState.OFFLINE -> 30f
-            else -> 0f
-        }
-
         canvas.save()
-        // Left ear
+        // Left ear — uses smoothly interpolated earAngle
         canvas.save()
         canvas.rotate(earAngle, cx - earOffset, cy - radius * 0.6f)
         canvas.drawCircle(cx - earOffset, cy - radius * 0.8f, earRadius, bodyPaint)
@@ -235,14 +286,11 @@ class CreatureView @JvmOverloads constructor(
         val eyeSpacing = radius * 0.35f
         val eyeY = cy - radius * 0.15f
 
-        // Eye closure (for blinking or sleeping)
-        val eyeClosure = when (currentState) {
-            CreatureState.SLEEPING, CreatureState.THINKING -> 1f
-            else -> blinkProgress
-        }
+        // Combine interpolated state closure with blink
+        val effectiveClosure = maxOf(eyeClosure, blinkProgress)
 
         // Draw eye whites
-        val eyeScaleY = 1f - eyeClosure * 0.9f
+        val eyeScaleY = 1f - effectiveClosure * 0.9f
 
         canvas.save()
         canvas.scale(1f, eyeScaleY, cx - eyeSpacing, eyeY)
@@ -254,24 +302,19 @@ class CreatureView @JvmOverloads constructor(
         canvas.drawCircle(cx + eyeSpacing, eyeY, eyeRadius, eyePaint)
         canvas.restore()
 
-        // Draw pupils if eyes are open enough
-        if (eyeClosure < 0.5f) {
+        // Draw pupils if eyes are open enough — uses smoothly interpolated offsets
+        if (effectiveClosure < 0.5f) {
             val pupilRadius = eyeRadius * 0.5f
-            val pupilOffset = when (currentState) {
-                CreatureState.LISTENING -> Pair(0f, -2f)  // Looking up
-                CreatureState.OFFLINE -> Pair(0f, 4f)     // Looking down
-                else -> Pair(0f, 0f)
-            }
 
             canvas.drawCircle(
-                cx - eyeSpacing + pupilOffset.first,
-                eyeY + pupilOffset.second,
+                cx - eyeSpacing + pupilOffsetX,
+                eyeY + pupilOffsetY,
                 pupilRadius,
                 pupilPaint
             )
             canvas.drawCircle(
-                cx + eyeSpacing + pupilOffset.first,
-                eyeY + pupilOffset.second,
+                cx + eyeSpacing + pupilOffsetX,
+                eyeY + pupilOffsetY,
                 pupilRadius,
                 pupilPaint
             )
@@ -355,5 +398,6 @@ class CreatureView @JvmOverloads constructor(
         blinkAnimator.cancel()
         thinkingAnimator.cancel()
         mainAnimator.cancel()
+        stateTransitionAnimator?.cancel()
     }
 }
