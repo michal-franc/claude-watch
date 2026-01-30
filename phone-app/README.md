@@ -4,6 +4,10 @@ Android phone app with a Tamagotchi-style Claude creature, real-time chat, and p
 
 ![Mockup](../docs/phone-mockups/companion-app.svg)
 
+## Architecture
+
+![Phone App Architecture](../docs/phone-architecture.jpg)
+
 ## Features
 
 ### Animated Creature
