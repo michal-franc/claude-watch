@@ -7,7 +7,6 @@ import android.util.AttributeSet
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.LinearInterpolator
-import android.view.animation.OvershootInterpolator
 import com.claudewatch.companion.R
 import kotlin.math.cos
 import kotlin.math.sin
@@ -37,6 +36,22 @@ class CreatureView @JvmOverloads constructor(
     private var targetBodyGrayAmount = 0f
 
     private var stateTransitionAnimator: ValueAnimator? = null
+
+    // Particle system
+    private val particles = mutableListOf<Particle>()
+    private var lastFrameTime = System.nanoTime()
+    private var particleSpawnAccumulator = 0f
+
+    enum class ParticleType { SPARKLE, BUBBLE, SWEAT, RING, STAR }
+
+    data class Particle(
+        var x: Float, var y: Float,
+        var vx: Float, var vy: Float,
+        var life: Float,
+        var size: Float,
+        var color: Int,
+        var type: ParticleType
+    )
 
     // Paints
     private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -68,6 +83,32 @@ class CreatureView @JvmOverloads constructor(
 
     private val pupilPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.BLACK
+        style = Paint.Style.FILL
+    }
+
+    private val irisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.FILL
+    }
+
+    private val eyeShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(40, 0, 0, 0)
+        style = Paint.Style.FILL
+    }
+
+    private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    private val particlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
 
@@ -200,6 +241,9 @@ class CreatureView @JvmOverloads constructor(
             }
             start()
         }
+
+        // Clear particles on state change so new state starts fresh
+        particles.clear()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -215,6 +259,9 @@ class CreatureView @JvmOverloads constructor(
             CreatureState.SPEAKING -> sin(animationProgress * Math.PI.toFloat() * 2) * 10f
             else -> 0f
         }
+
+        // Draw shadow and glow beneath body (not affected by body transform)
+        drawShadowAndGlow(canvas, centerX, centerY, baseRadius, breathScale, bounceOffset)
 
         canvas.save()
         canvas.translate(0f, -bounceOffset)
@@ -239,6 +286,66 @@ class CreatureView @JvmOverloads constructor(
             CreatureState.THINKING -> drawThinkingBubbles(canvas, centerX, centerY, baseRadius)
             CreatureState.SLEEPING -> drawZzz(canvas, centerX, centerY, baseRadius)
             else -> {}
+        }
+
+        // Update and draw particles
+        updateParticles(centerX, centerY, baseRadius)
+        drawParticles(canvas)
+
+        // Keep animation ticking for particles
+        if (particles.isNotEmpty() || currentState != CreatureState.OFFLINE) {
+            postInvalidateOnAnimation()
+        }
+    }
+
+    private fun drawShadowAndGlow(canvas: Canvas, cx: Float, cy: Float, radius: Float, breathScale: Float, bounceOffset: Float) {
+        val shadowCx = cx
+        val shadowCy = cy + radius * 1.15f - bounceOffset * 0.3f
+        val shadowRadiusX = radius * 0.7f * breathScale
+        val shadowRadiusY = radius * 0.15f
+
+        // Dark shadow oval
+        shadowPaint.shader = RadialGradient(
+            shadowCx, shadowCy,
+            maxOf(shadowRadiusX, 1f),
+            intArrayOf(Color.argb(50, 0, 0, 0), Color.TRANSPARENT),
+            floatArrayOf(0.3f, 1f),
+            Shader.TileMode.CLAMP
+        )
+        canvas.save()
+        canvas.scale(1f, shadowRadiusY / maxOf(shadowRadiusX, 1f), shadowCx, shadowCy)
+        canvas.drawCircle(shadowCx, shadowCy, shadowRadiusX, shadowPaint)
+        canvas.restore()
+
+        // State-colored glow
+        val glowColor = when (currentState) {
+            CreatureState.IDLE -> context.getColor(R.color.creature_glow_orange)
+            CreatureState.THINKING -> {
+                val alpha = (30 + 20 * sin(thinkingBubbleProgress * Math.PI.toFloat() * 2)).toInt()
+                Color.argb(alpha, 0, 0x99, 0xFF)
+            }
+            CreatureState.SPEAKING -> context.getColor(R.color.creature_glow_green)
+            CreatureState.LISTENING -> {
+                // Brighter orange for listening
+                Color.argb(80, 0xF5, 0x9E, 0x0B)
+            }
+            CreatureState.SLEEPING -> context.getColor(R.color.creature_glow_purple)
+            CreatureState.OFFLINE -> Color.TRANSPARENT
+        }
+
+        if (glowColor != Color.TRANSPARENT) {
+            val glowRadius = radius * 0.9f * breathScale
+            glowPaint.shader = RadialGradient(
+                shadowCx, shadowCy,
+                maxOf(glowRadius, 1f),
+                intArrayOf(glowColor, Color.TRANSPARENT),
+                floatArrayOf(0f, 1f),
+                Shader.TileMode.CLAMP
+            )
+            canvas.save()
+            canvas.scale(1f, 0.4f, shadowCx, shadowCy)
+            canvas.drawCircle(shadowCx, shadowCy, glowRadius, glowPaint)
+            canvas.restore()
         }
     }
 
@@ -289,35 +396,83 @@ class CreatureView @JvmOverloads constructor(
         // Combine interpolated state closure with blink
         val effectiveClosure = maxOf(eyeClosure, blinkProgress)
 
-        // Draw eye whites
         val eyeScaleY = 1f - effectiveClosure * 0.9f
 
-        canvas.save()
-        canvas.scale(1f, eyeScaleY, cx - eyeSpacing, eyeY)
-        canvas.drawCircle(cx - eyeSpacing, eyeY, eyeRadius, eyePaint)
-        canvas.restore()
+        // Draw each eye (left then right)
+        for (side in listOf(-1f, 1f)) {
+            val ex = cx + side * eyeSpacing
 
-        canvas.save()
-        canvas.scale(1f, eyeScaleY, cx + eyeSpacing, eyeY)
-        canvas.drawCircle(cx + eyeSpacing, eyeY, eyeRadius, eyePaint)
-        canvas.restore()
+            canvas.save()
+            canvas.scale(1f, eyeScaleY, ex, eyeY)
 
-        // Draw pupils if eyes are open enough — uses smoothly interpolated offsets
-        if (effectiveClosure < 0.5f) {
-            val pupilRadius = eyeRadius * 0.5f
-
-            canvas.drawCircle(
-                cx - eyeSpacing + pupilOffsetX,
-                eyeY + pupilOffsetY,
-                pupilRadius,
-                pupilPaint
+            // Eye white with subtle gradient for depth
+            eyePaint.shader = RadialGradient(
+                ex, eyeY,
+                maxOf(eyeRadius, 1f),
+                intArrayOf(Color.WHITE, Color.argb(255, 230, 230, 230)),
+                floatArrayOf(0.5f, 1f),
+                Shader.TileMode.CLAMP
             )
-            canvas.drawCircle(
-                cx + eyeSpacing + pupilOffsetX,
-                eyeY + pupilOffsetY,
-                pupilRadius,
-                pupilPaint
+            canvas.drawCircle(ex, eyeY, eyeRadius, eyePaint)
+            eyePaint.shader = null
+
+            // Lower shadow crescent for 3D depth
+            val shadowRect = RectF(
+                ex - eyeRadius * 0.8f,
+                eyeY + eyeRadius * 0.2f,
+                ex + eyeRadius * 0.8f,
+                eyeY + eyeRadius * 0.9f
             )
+            eyeShadowPaint.shader = RadialGradient(
+                ex, eyeY + eyeRadius * 0.7f,
+                maxOf(eyeRadius * 0.8f, 1f),
+                intArrayOf(Color.argb(40, 0, 0, 0), Color.TRANSPARENT),
+                floatArrayOf(0f, 1f),
+                Shader.TileMode.CLAMP
+            )
+            canvas.drawOval(shadowRect, eyeShadowPaint)
+            eyeShadowPaint.shader = null
+
+            // Iris and pupil only when eyes are open enough
+            if (effectiveClosure < 0.5f) {
+                val irisRadius = eyeRadius * 0.6f
+                val pupilDilate = when (currentState) {
+                    CreatureState.LISTENING -> 1.15f
+                    CreatureState.THINKING -> 0.85f
+                    else -> 1f
+                }
+                val pupilRadius = irisRadius * 0.55f * pupilDilate
+
+                val irisX = ex + pupilOffsetX
+                val irisY = eyeY + pupilOffsetY
+
+                // Iris with gradient
+                irisPaint.shader = RadialGradient(
+                    irisX, irisY,
+                    maxOf(irisRadius, 1f),
+                    intArrayOf(
+                        context.getColor(R.color.creature_iris),
+                        context.getColor(R.color.creature_iris_dark)
+                    ),
+                    floatArrayOf(0.3f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawCircle(irisX, irisY, irisRadius, irisPaint)
+
+                // Pupil
+                canvas.drawCircle(irisX, irisY, pupilRadius, pupilPaint)
+
+                // Specular highlight (top-left, fixed position relative to eye)
+                val hlRadius = eyeRadius * 0.2f
+                canvas.drawCircle(
+                    ex - eyeRadius * 0.25f,
+                    eyeY - eyeRadius * 0.25f,
+                    hlRadius,
+                    highlightPaint
+                )
+            }
+
+            canvas.restore()
         }
     }
 
@@ -390,6 +545,180 @@ class CreatureView @JvmOverloads constructor(
         canvas.drawText("Z", startX + 35f, startY - 55f - animationProgress * 20f, zzzPaint)
 
         zzzPaint.textSize = 32f  // Reset
+    }
+
+    // --- Particle system ---
+
+    private fun updateParticles(cx: Float, cy: Float, radius: Float) {
+        val now = System.nanoTime()
+        val dt = ((now - lastFrameTime) / 1_000_000_000f).coerceIn(0f, 0.1f)
+        lastFrameTime = now
+
+        // Update existing particles
+        val iter = particles.iterator()
+        while (iter.hasNext()) {
+            val p = iter.next()
+            p.life -= dt * 0.8f
+            if (p.life <= 0f) {
+                iter.remove()
+                continue
+            }
+            p.x += p.vx * dt
+            p.y += p.vy * dt
+            // Rings expand
+            if (p.type == ParticleType.RING) {
+                p.size += 40f * dt
+            }
+        }
+
+        // Spawn new particles based on state
+        particleSpawnAccumulator += dt
+        val spawnInterval = when (currentState) {
+            CreatureState.SPEAKING -> 0.08f
+            CreatureState.THINKING -> 0.15f
+            CreatureState.LISTENING -> 0.2f
+            CreatureState.IDLE -> 0.6f
+            CreatureState.SLEEPING -> 0.4f
+            CreatureState.OFFLINE -> Float.MAX_VALUE
+        }
+
+        val maxParticles = 20
+
+        while (particleSpawnAccumulator >= spawnInterval && particles.size < maxParticles) {
+            particleSpawnAccumulator -= spawnInterval
+            spawnParticle(cx, cy, radius)
+        }
+        if (particleSpawnAccumulator > spawnInterval) {
+            particleSpawnAccumulator = 0f
+        }
+    }
+
+    private fun spawnParticle(cx: Float, cy: Float, radius: Float) {
+        val rng = { min: Float, max: Float -> min + Math.random().toFloat() * (max - min) }
+
+        when (currentState) {
+            CreatureState.SPEAKING -> {
+                // Gold sparkles rising from body
+                particles.add(Particle(
+                    x = cx + rng(-radius * 0.5f, radius * 0.5f),
+                    y = cy + rng(-radius * 0.3f, radius * 0.3f),
+                    vx = rng(-15f, 15f),
+                    vy = rng(-60f, -30f),
+                    life = 1f,
+                    size = rng(3f, 6f),
+                    color = Color.argb(200, 0xFF, 0xD7, 0x00),
+                    type = ParticleType.SPARKLE
+                ))
+            }
+            CreatureState.THINKING -> {
+                // White/blue bubbles drifting up-right from head
+                particles.add(Particle(
+                    x = cx + radius * 0.8f + rng(-5f, 5f),
+                    y = cy - radius * 0.5f + rng(-10f, 10f),
+                    vx = rng(8f, 20f),
+                    vy = rng(-25f, -15f),
+                    life = 1f,
+                    size = rng(3f, 7f),
+                    color = Color.argb(160, 0xCC, 0xDD, 0xFF),
+                    type = ParticleType.BUBBLE
+                ))
+            }
+            CreatureState.LISTENING -> {
+                // Pulse rings expanding from ears
+                val side = if (Math.random() > 0.5) -1f else 1f
+                particles.add(Particle(
+                    x = cx + side * radius * 0.7f,
+                    y = cy - radius * 0.6f,
+                    vx = 0f,
+                    vy = 0f,
+                    life = 1f,
+                    size = 5f,
+                    color = Color.argb(120, 0xF5, 0x9E, 0x0B),
+                    type = ParticleType.RING
+                ))
+            }
+            CreatureState.IDLE -> {
+                // Sparse ambient motes
+                particles.add(Particle(
+                    x = cx + rng(-radius, radius),
+                    y = cy + rng(-radius * 0.5f, radius * 0.5f),
+                    vx = rng(-5f, 5f),
+                    vy = rng(-10f, -5f),
+                    life = 1f,
+                    size = rng(2f, 4f),
+                    color = Color.argb(80, 0xF5, 0x9E, 0x0B),
+                    type = ParticleType.SPARKLE
+                ))
+            }
+            CreatureState.SLEEPING -> {
+                // Tiny slow stars
+                particles.add(Particle(
+                    x = cx + rng(-radius * 0.8f, radius * 0.8f),
+                    y = cy - radius * rng(0.3f, 1.0f),
+                    vx = rng(-3f, 3f),
+                    vy = rng(-8f, -3f),
+                    life = 1f,
+                    size = rng(2f, 4f),
+                    color = Color.argb(100, 0xFF, 0xFF, 0xFF),
+                    type = ParticleType.STAR
+                ))
+            }
+            CreatureState.OFFLINE -> { /* no particles */ }
+        }
+    }
+
+    private fun drawParticles(canvas: Canvas) {
+        for (p in particles) {
+            val alpha = (p.life.coerceIn(0f, 1f) * Color.alpha(p.color)).toInt()
+            if (alpha <= 0) continue
+
+            particlePaint.color = Color.argb(
+                alpha,
+                Color.red(p.color),
+                Color.green(p.color),
+                Color.blue(p.color)
+            )
+
+            when (p.type) {
+                ParticleType.SPARKLE -> {
+                    // Diamond shape
+                    val path = Path()
+                    path.moveTo(p.x, p.y - p.size)
+                    path.lineTo(p.x + p.size * 0.6f, p.y)
+                    path.lineTo(p.x, p.y + p.size)
+                    path.lineTo(p.x - p.size * 0.6f, p.y)
+                    path.close()
+                    canvas.drawPath(path, particlePaint)
+                }
+                ParticleType.BUBBLE -> {
+                    canvas.drawCircle(p.x, p.y, p.size, particlePaint)
+                }
+                ParticleType.RING -> {
+                    particlePaint.style = Paint.Style.STROKE
+                    particlePaint.strokeWidth = 2f
+                    canvas.drawCircle(p.x, p.y, p.size, particlePaint)
+                    particlePaint.style = Paint.Style.FILL
+                }
+                ParticleType.STAR -> {
+                    // Small 4-point star
+                    val path = Path()
+                    val s = p.size
+                    path.moveTo(p.x, p.y - s)
+                    path.lineTo(p.x + s * 0.3f, p.y - s * 0.3f)
+                    path.lineTo(p.x + s, p.y)
+                    path.lineTo(p.x + s * 0.3f, p.y + s * 0.3f)
+                    path.lineTo(p.x, p.y + s)
+                    path.lineTo(p.x - s * 0.3f, p.y + s * 0.3f)
+                    path.lineTo(p.x - s, p.y)
+                    path.lineTo(p.x - s * 0.3f, p.y - s * 0.3f)
+                    path.close()
+                    canvas.drawPath(path, particlePaint)
+                }
+                ParticleType.SWEAT -> {
+                    canvas.drawCircle(p.x, p.y, p.size, particlePaint)
+                }
+            }
+        }
     }
 
     override fun onDetachedFromWindow() {

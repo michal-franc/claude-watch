@@ -19,6 +19,14 @@
     <color name="status_disconnected">#F44336</color>
     <color name="status_connecting">#FFC107</color>
 
+    <!-- Creature enhanced features -->
+    <color name="creature_iris">#B8860B</color>
+    <color name="creature_iris_dark">#8B6508</color>
+    <color name="creature_glow_orange">#40F59E0B</color>
+    <color name="creature_glow_blue">#400099FF</color>
+    <color name="creature_glow_green">#404CAF50</color>
+    <color name="creature_glow_purple">#309C27B0</color>
+
     <!-- Primary colors -->
     <color name="primary">#0099FF</color>
     <color name="primary_dark">#0077CC</color>
