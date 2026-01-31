@@ -16,6 +16,34 @@ Bi-directional voice-to-Claude pipeline: Speak into your Galaxy Watch or phone, 
 5. **Permission Hook** - Intercepts dangerous operations for approval
 6. **Response** - Text notification or audio playback
 
+## Phone Relay
+
+![Phone Relay Architecture](docs/phone-relay-architecture.jpg)
+
+The watch has no direct network connection to the server. Instead, all traffic is relayed through the paired Android phone using the Wearable DataLayer API (Bluetooth).
+
+**How it works:**
+
+1. The watch's `RelayClient` sends HTTP requests, WebSocket messages, and audio streams to the phone via `MessageClient` and `ChannelClient` (Bluetooth)
+2. The phone's `PhoneRelayService` receives these messages and forwards them to the server using OkHttp (HTTP and WebSocket)
+3. Server responses flow back through the same path: server -> phone -> watch
+
+**Message protocol between watch and phone:**
+
+| Path | Purpose |
+|------|---------|
+| `/relay/ws/connect`, `/relay/ws/disconnect` | WebSocket lifecycle |
+| `/relay/ws/message`, `/relay/ws/status` | WebSocket data |
+| `/relay/http/request`, `/relay/http/response` | HTTP relay |
+| `/relay/audio/upload`, `/relay/audio/download` | Audio streams (ChannelClient) |
+
+**Key components:**
+
+- **Watch:** `RelayClient` (singleton), `RelayMessageService`, `WatchWebSocketClient`
+- **Phone:** `PhoneRelayService`, `RelayWebSocketManager`, OkHttp client
+
+This means the watch app doesn't need a server IP configured - it only needs to be paired with the phone. The phone app handles the actual network connection to the server.
+
 ## Components
 
 | Component | Description |
