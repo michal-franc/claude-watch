@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Watch – Architecture Diagram</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #111; color: #ddd; display: flex; flex-direction: column; min-height: 100vh; }
+
+  /* Controls */
+  .controls { background: #1a1a1a; border-bottom: 1px solid #333; padding: 14px 20px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .controls-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: #666; margin-right: 6px; }
+  .flow-btn { padding: 6px 12px; font-size: 11px; border: 1px solid #F59E0B; border-radius: 6px; background: transparent; color: #F59E0B; cursor: pointer; }
+  .flow-btn:hover { background: #F59E0B22; }
+  .flow-btn.active { background: #F59E0B; color: #111; }
+  .sep { width: 1px; height: 20px; background: #333; margin: 0 4px; }
+  .legend { display: flex; gap: 12px; margin-left: auto; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #888; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  /* Canvas */
+  .diagram-area { flex: 1; display: flex; align-items: center; justify-content: center; background: #0d0d0d; padding: 20px; }
+  .diagram-svg { max-width: 960px; width: 100%; height: auto; }
+
+  /* SVG styles */
+  .node-box { fill: #1a1a2e; stroke: #444; stroke-width: 1.5; rx: 8; }
+  .node-box.external { fill: #1a2e1a; stroke: #4CAF50; }
+  .node-box.client { fill: #1a1a2e; stroke: #0099FF; }
+  .node-box.server { fill: #2e2a1a; stroke: #F59E0B; }
+  .node-label { fill: #eee; font-size: 13px; font-weight: 600; text-anchor: middle; dominant-baseline: central; font-family: system-ui, sans-serif; }
+  .node-sub { fill: #888; font-size: 9px; text-anchor: middle; dominant-baseline: central; font-family: system-ui, sans-serif; }
+  .node-icon { font-size: 18px; text-anchor: middle; dominant-baseline: central; }
+
+  .edge { fill: none; stroke-width: 1.5; stroke-dasharray: 6 4; opacity: 0.25; }
+  .edge.http { stroke: #42A5F5; }
+  .edge.ws { stroke: #66BB6A; }
+  .edge.ext { stroke: #AB47BC; }
+  .edge.pipe { stroke: #FF7043; }
+  .edge.active { opacity: 0.7; stroke-dasharray: none; }
+
+  /* Packets */
+  .packet { r: 5; opacity: 0; }
+  .packet.http { fill: #42A5F5; }
+  .packet.ws { fill: #66BB6A; }
+  .packet.ext { fill: #AB47BC; }
+  .packet.pipe { fill: #FF7043; }
+  .packet.active { opacity: 1; }
+
+  /* Protocol labels */
+  .proto-label { fill: #666; font-size: 8px; text-anchor: middle; font-family: 'SF Mono', 'Fira Code', monospace; }
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <span class="controls-label">Flow</span>
+  <button class="flow-btn active" onclick="setFlow('idle')">Idle</button>
+  <button class="flow-btn" onclick="setFlow('voice')">Voice Query</button>
+  <button class="flow-btn" onclick="setFlow('text')">Text Message</button>
+  <button class="flow-btn" onclick="setFlow('permission')">Permission</button>
+  <button class="flow-btn" onclick="setFlow('all')">All Flows</button>
+  <span class="sep"></span>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#42A5F5"></div>HTTP</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#66BB6A"></div>WebSocket</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#AB47BC"></div>External API</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#FF7043"></div>stdin/stdout</div>
+  </div>
+</div>
+
+<div class="diagram-area">
+<svg class="diagram-svg" viewBox="0 0 920 520" xmlns="http://www.w3.org/2000/svg">
+  <!-- ====== NODES ====== -->
+
+  <!-- Galaxy Watch -->
+  <rect class="node-box client" x="20" y="60" width="130" height="70"/>
+  <text class="node-icon" x="85" y="82">&#9201;</text>
+  <text class="node-label" x="85" y="102">Galaxy Watch</text>
+  <text class="node-sub" x="85" y="118">Wear OS</text>
+
+  <!-- Companion Phone -->
+  <rect class="node-box client" x="20" y="200" width="130" height="70"/>
+  <text class="node-icon" x="85" y="222">&#128241;</text>
+  <text class="node-label" x="85" y="242">Phone App</text>
+  <text class="node-sub" x="85" y="258">Android</text>
+
+  <!-- Dashboard -->
+  <rect class="node-box client" x="20" y="340" width="130" height="70"/>
+  <text class="node-icon" x="85" y="362">&#128187;</text>
+  <text class="node-label" x="85" y="382">Dashboard</text>
+  <text class="node-sub" x="85" y="398">Vue.js</text>
+
+  <!-- HTTP Server -->
+  <rect class="node-box server" x="260" y="100" width="150" height="80"/>
+  <text class="node-label" x="335" y="132">HTTP Server</text>
+  <text class="node-sub" x="335" y="152">port 5566</text>
+  <text class="node-sub" x="335" y="166">server.py</text>
+
+  <!-- WebSocket Server -->
+  <rect class="node-box server" x="260" y="260" width="150" height="80"/>
+  <text class="node-label" x="335" y="292">WebSocket</text>
+  <text class="node-sub" x="335" y="312">port 5567</text>
+  <text class="node-sub" x="335" y="326">real-time</text>
+
+  <!-- Deepgram -->
+  <rect class="node-box external" x="510" y="20" width="140" height="70"/>
+  <text class="node-icon" x="580" y="42">&#127908;</text>
+  <text class="node-label" x="580" y="62">Deepgram</text>
+  <text class="node-sub" x="580" y="78">STT + TTS</text>
+
+  <!-- Claude Wrapper -->
+  <rect class="node-box server" x="510" y="160" width="140" height="80"/>
+  <text class="node-label" x="580" y="190">Claude</text>
+  <text class="node-label" x="580" y="206">Wrapper</text>
+  <text class="node-sub" x="580" y="226">persistent process</text>
+
+  <!-- Permission Hook -->
+  <rect class="node-box server" x="510" y="310" width="140" height="70"/>
+  <text class="node-label" x="580" y="338">Permission</text>
+  <text class="node-label" x="580" y="354">Hook</text>
+  <text class="node-sub" x="580" y="370">tool approval</text>
+
+  <!-- Claude Code CLI -->
+  <rect class="node-box external" x="740" y="140" width="150" height="80"/>
+  <text class="node-icon" x="815" y="162">&#129302;</text>
+  <text class="node-label" x="815" y="182">Claude Code</text>
+  <text class="node-sub" x="815" y="198">CLI process</text>
+  <text class="node-sub" x="815" y="212">stream-json</text>
+
+  <!-- tmux -->
+  <rect class="node-box" x="740" y="290" width="150" height="60" style="stroke:#888"/>
+  <text class="node-label" x="815" y="314">tmux</text>
+  <text class="node-sub" x="815" y="332">claude-watch</text>
+
+  <!-- ====== EDGES ====== -->
+
+  <!-- Watch → HTTP Server (audio POST /transcribe) -->
+  <path id="e-watch-server" class="edge http" d="M150,95 L260,130"/>
+  <text class="proto-label" x="200" y="102">POST /transcribe</text>
+
+  <!-- Phone → HTTP Server (text POST /api/message) -->
+  <path id="e-phone-server" class="edge http" d="M150,225 L260,155"/>
+  <text class="proto-label" x="195" y="183">POST /api/message</text>
+
+  <!-- Watch ↔ WebSocket -->
+  <path id="e-watch-ws" class="edge ws" d="M150,115 Q200,200 260,280"/>
+  <text class="proto-label" x="175" y="198" transform="rotate(-5,175,198)">ws://</text>
+
+  <!-- Phone ↔ WebSocket -->
+  <path id="e-phone-ws" class="edge ws" d="M150,255 L260,290"/>
+  <text class="proto-label" x="200" y="265">ws://</text>
+
+  <!-- Dashboard ↔ WebSocket -->
+  <path id="e-dash-ws" class="edge ws" d="M150,365 L260,310"/>
+  <text class="proto-label" x="195" y="345">ws://</text>
+
+  <!-- HTTP Server → Deepgram (audio for STT) -->
+  <path id="e-server-deepgram" class="edge ext" d="M410,120 L510,65"/>
+  <text class="proto-label" x="460" y="80">HTTPS</text>
+
+  <!-- Deepgram → HTTP Server (transcript back) -->
+  <path id="e-deepgram-server" class="edge ext" d="M510,75 L410,130"/>
+
+  <!-- HTTP Server → Claude Wrapper (send prompt) -->
+  <path id="e-server-claude" class="edge pipe" d="M410,160 L510,190"/>
+  <text class="proto-label" x="460" y="168">prompt</text>
+
+  <!-- Claude Wrapper → HTTP Server (response) -->
+  <path id="e-claude-server" class="edge pipe" d="M510,180 L410,145"/>
+  <text class="proto-label" x="460" y="155">response</text>
+
+  <!-- HTTP Server ↔ WebSocket (internal broadcast) -->
+  <path id="e-server-ws" class="edge pipe" d="M335,180 L335,260"/>
+  <text class="proto-label" x="355" y="222" transform="rotate(90,355,222)">broadcast</text>
+
+  <!-- Claude Wrapper ↔ Claude Code CLI (stdin/stdout) -->
+  <path id="e-claude-cli" class="edge pipe" d="M650,200 L740,180"/>
+  <text class="proto-label" x="695" y="183">stdin/stdout</text>
+
+  <!-- Claude Code → Permission Hook -->
+  <path id="e-cli-hook" class="edge pipe" d="M780,220 Q700,270 650,320"/>
+  <text class="proto-label" x="720" y="268">hook call</text>
+
+  <!-- Permission Hook → HTTP Server (request approval) -->
+  <path id="e-hook-server" class="edge http" d="M510,345 L410,165"/>
+  <text class="proto-label" x="448" y="262">POST /permission</text>
+
+  <!-- HTTP Server → Permission Hook (decision) -->
+  <path id="e-server-hook" class="edge http" d="M400,170 L520,340"/>
+  <text class="proto-label" x="472" y="280">GET /status</text>
+
+  <!-- Claude Wrapper → tmux -->
+  <path id="e-claude-tmux" class="edge pipe" d="M650,225 Q700,270 740,310"/>
+  <text class="proto-label" x="710" y="262">tail log</text>
+
+  <!-- Deepgram TTS back (server gets audio) -->
+  <path id="e-deepgram-tts" class="edge ext" d="M580,90 L580,160"/>
+  <text class="proto-label" x="600" y="128" transform="rotate(90,600,128)">TTS mp3</text>
+
+  <!-- ====== PACKETS (animated dots) ====== -->
+  <circle id="p-watch-server" class="packet http"/>
+  <circle id="p-phone-server" class="packet http"/>
+  <circle id="p-server-deepgram" class="packet ext"/>
+  <circle id="p-deepgram-server" class="packet ext"/>
+  <circle id="p-server-claude" class="packet pipe"/>
+  <circle id="p-claude-server" class="packet pipe"/>
+  <circle id="p-claude-cli" class="packet pipe"/>
+  <circle id="p-cli-hook" class="packet pipe"/>
+  <circle id="p-hook-server" class="packet http"/>
+  <circle id="p-server-hook" class="packet http"/>
+  <circle id="p-watch-ws" class="packet ws"/>
+  <circle id="p-phone-ws" class="packet ws"/>
+  <circle id="p-dash-ws" class="packet ws"/>
+  <circle id="p-server-ws" class="packet pipe"/>
+  <circle id="p-deepgram-tts" class="packet ext"/>
+  <circle id="p-claude-tmux" class="packet pipe"/>
+</svg>
+</div>
+
+<script>
+(function() {
+  let currentFlow = 'idle';
+  let animFrame = null;
+  let startTime = 0;
+
+  // Define which edges and packets are active per flow
+  const flows = {
+    idle: { edges: [], packets: [] },
+    voice: {
+      edges: ['e-watch-server','e-server-deepgram','e-deepgram-server','e-server-claude','e-claude-cli',
+              'e-claude-server','e-server-ws','e-watch-ws','e-phone-ws','e-dash-ws','e-deepgram-tts','e-claude-tmux'],
+      packets: [
+        { id:'p-watch-server', path:'e-watch-server', delay:0, dur:1.2 },
+        { id:'p-server-deepgram', path:'e-server-deepgram', delay:1.2, dur:1.0 },
+        { id:'p-deepgram-server', path:'e-deepgram-server', delay:2.4, dur:1.0 },
+        { id:'p-server-claude', path:'e-server-claude', delay:3.6, dur:0.8 },
+        { id:'p-claude-cli', path:'e-claude-cli', delay:4.4, dur:0.8 },
+        { id:'p-claude-server', path:'e-claude-server', delay:6.0, dur:0.8 },
+        { id:'p-claude-tmux', path:'e-claude-tmux', delay:5.5, dur:0.6 },
+        { id:'p-server-ws', path:'e-server-ws', delay:7.0, dur:0.6 },
+        { id:'p-watch-ws', path:'e-watch-ws', delay:7.6, dur:1.0 },
+        { id:'p-phone-ws', path:'e-phone-ws', delay:7.6, dur:0.8 },
+        { id:'p-dash-ws', path:'e-dash-ws', delay:7.6, dur:0.8 },
+        { id:'p-deepgram-tts', path:'e-deepgram-tts', delay:6.8, dur:0.8 },
+      ]
+    },
+    text: {
+      edges: ['e-phone-server','e-server-claude','e-claude-cli','e-claude-server',
+              'e-server-ws','e-watch-ws','e-phone-ws','e-dash-ws','e-claude-tmux'],
+      packets: [
+        { id:'p-phone-server', path:'e-phone-server', delay:0, dur:1.0 },
+        { id:'p-server-claude', path:'e-server-claude', delay:1.2, dur:0.8 },
+        { id:'p-claude-cli', path:'e-claude-cli', delay:2.0, dur:0.8 },
+        { id:'p-claude-server', path:'e-claude-server', delay:3.5, dur:0.8 },
+        { id:'p-claude-tmux', path:'e-claude-tmux', delay:3.0, dur:0.6 },
+        { id:'p-server-ws', path:'e-server-ws', delay:4.5, dur:0.6 },
+        { id:'p-watch-ws', path:'e-watch-ws', delay:5.2, dur:1.0 },
+        { id:'p-phone-ws', path:'e-phone-ws', delay:5.2, dur:0.8 },
+        { id:'p-dash-ws', path:'e-dash-ws', delay:5.2, dur:0.8 },
+      ]
+    },
+    permission: {
+      edges: ['e-phone-server','e-server-claude','e-claude-cli','e-cli-hook',
+              'e-hook-server','e-server-ws','e-phone-ws','e-watch-ws','e-dash-ws',
+              'e-server-hook','e-claude-server','e-claude-tmux'],
+      packets: [
+        { id:'p-phone-server', path:'e-phone-server', delay:0, dur:1.0 },
+        { id:'p-server-claude', path:'e-server-claude', delay:1.2, dur:0.8 },
+        { id:'p-claude-cli', path:'e-claude-cli', delay:2.0, dur:0.8 },
+        { id:'p-cli-hook', path:'e-cli-hook', delay:3.0, dur:1.0 },
+        { id:'p-hook-server', path:'e-hook-server', delay:4.2, dur:1.2 },
+        { id:'p-server-ws', path:'e-server-ws', delay:5.4, dur:0.6 },
+        { id:'p-phone-ws', path:'e-phone-ws', delay:6.0, dur:0.8 },
+        { id:'p-watch-ws', path:'e-watch-ws', delay:6.0, dur:1.0 },
+        { id:'p-dash-ws', path:'e-dash-ws', delay:6.0, dur:0.8 },
+        { id:'p-server-hook', path:'e-server-hook', delay:7.5, dur:1.2 },
+        { id:'p-claude-server', path:'e-claude-server', delay:9.0, dur:0.8 },
+        { id:'p-claude-tmux', path:'e-claude-tmux', delay:8.5, dur:0.6 },
+      ]
+    },
+    all: {
+      edges: ['e-watch-server','e-phone-server','e-server-deepgram','e-deepgram-server',
+              'e-server-claude','e-claude-cli','e-claude-server','e-cli-hook',
+              'e-hook-server','e-server-hook','e-server-ws','e-watch-ws','e-phone-ws',
+              'e-dash-ws','e-deepgram-tts','e-claude-tmux'],
+      packets: [
+        { id:'p-watch-server', path:'e-watch-server', delay:0, dur:1.2 },
+        { id:'p-phone-server', path:'e-phone-server', delay:0.5, dur:1.0 },
+        { id:'p-server-deepgram', path:'e-server-deepgram', delay:1.5, dur:1.0 },
+        { id:'p-deepgram-server', path:'e-deepgram-server', delay:2.8, dur:1.0 },
+        { id:'p-server-claude', path:'e-server-claude', delay:4.0, dur:0.8 },
+        { id:'p-claude-cli', path:'e-claude-cli', delay:4.8, dur:0.8 },
+        { id:'p-cli-hook', path:'e-cli-hook', delay:5.8, dur:1.0 },
+        { id:'p-hook-server', path:'e-hook-server', delay:7.0, dur:1.2 },
+        { id:'p-server-ws', path:'e-server-ws', delay:8.4, dur:0.6 },
+        { id:'p-phone-ws', path:'e-phone-ws', delay:9.0, dur:0.8 },
+        { id:'p-watch-ws', path:'e-watch-ws', delay:9.0, dur:1.0 },
+        { id:'p-dash-ws', path:'e-dash-ws', delay:9.0, dur:0.8 },
+        { id:'p-server-hook', path:'e-server-hook', delay:9.5, dur:1.2 },
+        { id:'p-claude-server', path:'e-claude-server', delay:11.0, dur:0.8 },
+        { id:'p-deepgram-tts', path:'e-deepgram-tts', delay:11.8, dur:0.8 },
+        { id:'p-claude-tmux', path:'e-claude-tmux', delay:10.5, dur:0.6 },
+      ]
+    }
+  };
+
+  function getPathPoints(pathEl) {
+    // For <path> elements, sample points along the path
+    const len = pathEl.getTotalLength();
+    return { el: pathEl, len: len };
+  }
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  function posOnPath(pathInfo, t) {
+    t = Math.max(0, Math.min(1, t));
+    const pt = pathInfo.el.getPointAtLength(t * pathInfo.len);
+    return { x: pt.x, y: pt.y };
+  }
+
+  function animate(timestamp) {
+    if (!startTime) startTime = timestamp;
+    const elapsed = (timestamp - startTime) / 1000; // seconds
+
+    const flow = flows[currentFlow];
+    if (!flow || !flow.packets.length) return;
+
+    // Calculate total cycle duration
+    const maxEnd = Math.max(...flow.packets.map(p => p.delay + p.dur));
+    const cycleDur = maxEnd + 1.5; // pause between loops
+    const t = elapsed % cycleDur;
+
+    flow.packets.forEach(pDef => {
+      const circle = document.getElementById(pDef.id);
+      const pathEl = document.getElementById(pDef.path);
+      if (!circle || !pathEl) return;
+
+      const localT = (t - pDef.delay) / pDef.dur;
+      if (localT < 0 || localT > 1) {
+        circle.setAttribute('opacity', '0');
+        return;
+      }
+
+      const pathInfo = getPathPoints(pathEl);
+      const pos = posOnPath(pathInfo, localT);
+      circle.setAttribute('cx', pos.x);
+      circle.setAttribute('cy', pos.y);
+      circle.setAttribute('opacity', '1');
+      circle.setAttribute('r', 5);
+    });
+
+    animFrame = requestAnimationFrame(animate);
+  }
+
+  window.setFlow = function(name) {
+    currentFlow = name;
+    startTime = 0;
+
+    // Update buttons
+    document.querySelectorAll('.flow-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.flow-btn').forEach(b => {
+      if (b.textContent.toLowerCase().replace(/\s+/g,'') === name.replace(/\s+/g,'')) b.classList.add('active');
+    });
+
+    // Reset all edges and packets
+    document.querySelectorAll('.edge').forEach(e => e.classList.remove('active'));
+    document.querySelectorAll('.packet').forEach(p => p.setAttribute('opacity', '0'));
+
+    // Activate edges for this flow
+    const flow = flows[name];
+    if (flow) {
+      flow.edges.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('active');
+      });
+    }
+
+    // Start/stop animation
+    if (animFrame) cancelAnimationFrame(animFrame);
+    if (name !== 'idle' && flow && flow.packets.length) {
+      animFrame = requestAnimationFrame(animate);
+    }
+  };
+
+  // Init
+  setFlow('idle');
+})();
+</script>
+</body>
+</html>
