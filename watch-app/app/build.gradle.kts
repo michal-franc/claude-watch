@@ -54,6 +54,10 @@ dependencies {
     // OkHttp for HTTP requests
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // Wearable DataLayer API for phone relay
+    implementation("com.google.android.gms:play-services-wearable:18.1.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
+
     // Lifecycle
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
 

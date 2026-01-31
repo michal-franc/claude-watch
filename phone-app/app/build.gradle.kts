@@ -8,7 +8,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.claudewatch.companion"
+        applicationId = "com.claudewatch.app"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
@@ -56,6 +56,10 @@ dependencies {
 
     // OkHttp with WebSocket support
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Wearable DataLayer API for watch relay
+    implementation("com.google.android.gms:play-services-wearable:18.1.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
 
     // Lifecycle
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")

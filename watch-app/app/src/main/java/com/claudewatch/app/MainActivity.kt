@@ -18,7 +18,6 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import android.app.Activity
 import androidx.core.content.ContextCompat
@@ -26,16 +25,11 @@ import androidx.core.app.ActivityCompat
 import androidx.wear.widget.WearableRecyclerView
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
-import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.asRequestBody
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.File
-import java.io.IOException
-import java.util.concurrent.TimeUnit
 import com.claudewatch.app.chat.WatchChatAdapter
 import com.claudewatch.app.network.*
+import com.claudewatch.app.relay.RelayClient
 
 class MainActivity : Activity() {
 
@@ -89,19 +83,17 @@ class MainActivity : Activity() {
     private var currentAudioFile: File? = null
     private var currentRequestId: String? = null
 
-    // WebSocket client
+    // WebSocket client (now routes through phone relay)
     private lateinit var wsClient: WatchWebSocketClient
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main + Job())
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .build()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        // Initialize relay client
+        RelayClient.init(this)
 
         initViews()
         setupChat()
@@ -182,10 +174,8 @@ class MainActivity : Activity() {
     }
 
     private fun setupWebSocket() {
-        val prefs = getSharedPreferences("ClaudeWatchPrefs", MODE_PRIVATE)
-        val ip = prefs.getString("server_ip", "192.168.1.100") ?: "192.168.1.100"
-        val wsAddress = "$ip:5567"
-        wsClient = WatchWebSocketClient(wsAddress)
+        // No server address needed — relay goes through phone
+        wsClient = WatchWebSocketClient()
         wsClient.connect()
     }
 
@@ -376,26 +366,18 @@ class MainActivity : Activity() {
         coroutineScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val baseUrl = SettingsActivity.getBaseUrl(this@MainActivity)
-                    val url = "$baseUrl/api/permission/respond"
-
                     val jsonBody = JSONObject().apply {
                         put("request_id", requestId)
                         put("decision", decision)
                     }
-
-                    val requestBody = jsonBody.toString()
-                        .toByteArray()
-                        .toRequestBody("application/json".toMediaType())
-
-                    val request = Request.Builder()
-                        .url(url)
-                        .post(requestBody)
-                        .build()
-
-                    val response = httpClient.newCall(request).execute()
-                    Log.d(TAG, "Permission response sent: ${response.code}")
+                    RelayClient.httpRequest(
+                        method = "POST",
+                        path = "/api/permission/respond",
+                        body = jsonBody.toString(),
+                        headers = mapOf("Content-Type" to "application/json")
+                    )
                 }
+                Log.d(TAG, "Permission response sent via relay")
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending permission response", e)
             }
@@ -409,25 +391,17 @@ class MainActivity : Activity() {
         coroutineScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val baseUrl = SettingsActivity.getBaseUrl(this@MainActivity)
-                    val url = "$baseUrl/api/prompt/respond"
-
                     val jsonBody = JSONObject().apply {
                         put("option", optionNum)
                     }
-
-                    val requestBody = jsonBody.toString()
-                        .toByteArray()
-                        .toRequestBody("application/json".toMediaType())
-
-                    val request = Request.Builder()
-                        .url(url)
-                        .post(requestBody)
-                        .build()
-
-                    val response = httpClient.newCall(request).execute()
-                    Log.d(TAG, "Prompt response sent: ${response.code}")
+                    RelayClient.httpRequest(
+                        method = "POST",
+                        path = "/api/prompt/respond",
+                        body = jsonBody.toString(),
+                        headers = mapOf("Content-Type" to "application/json")
+                    )
                 }
+                Log.d(TAG, "Prompt response sent via relay")
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending prompt response", e)
             }
@@ -506,55 +480,25 @@ class MainActivity : Activity() {
 
         coroutineScope.launch {
             try {
-                val result = withContext(Dispatchers.IO) {
-                    sendToServer(file)
+                val responseMode = if (voiceResponseEnabled) "audio" else "text"
+                val audioBytes = withContext(Dispatchers.IO) { file.readBytes() }
+
+                val responseBody = withContext(Dispatchers.IO) {
+                    RelayClient.uploadAudio(audioBytes, responseMode)
                 }
 
-                if (result.isSuccess) {
-                    val responseBody = result.getOrNull() ?: ""
-                    try {
-                        val json = JSONObject(responseBody)
-                        currentRequestId = json.optString("request_id", "").ifEmpty { null }
-                    } catch (_: Exception) {}
-                    vibrate(50)
-                    file.delete()
-                    audioFile = null
-                    // Trust WebSocket for state updates - no polling needed
-                } else {
-                    Log.e(TAG, "Send failed: ${result.exceptionOrNull()?.message}")
-                    vibrate(longArrayOf(0, 100, 100, 100))
-                }
+                try {
+                    val json = JSONObject(responseBody)
+                    currentRequestId = json.optString("request_id", "").ifEmpty { null }
+                } catch (_: Exception) {}
+                vibrate(50)
+                file.delete()
+                audioFile = null
+                // Trust WebSocket for state updates - no polling needed
             } catch (e: Exception) {
-                Log.e(TAG, "Error sending recording", e)
+                Log.e(TAG, "Send failed: ${e.message}", e)
                 vibrate(longArrayOf(0, 100, 100, 100))
             }
-        }
-    }
-
-    private suspend fun sendToServer(file: File): Result<String> {
-        return try {
-            val serverUrl = SettingsActivity.getServerUrl(this@MainActivity)
-            val requestBody = file.asRequestBody("audio/mp4".toMediaType())
-            val responseMode = if (voiceResponseEnabled) "audio" else "text"
-
-            val request = Request.Builder()
-                .url(serverUrl)
-                .header("X-Response-Mode", responseMode)
-                .post(requestBody)
-                .build()
-
-            val response = httpClient.newCall(request).execute()
-
-            if (response.isSuccessful) {
-                val body = response.body?.string() ?: ""
-                Log.d(TAG, "Server response: $body")
-                Result.success(body)
-            } else {
-                Result.failure(IOException("Server error: ${response.code}"))
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Network error", e)
-            Result.failure(e)
         }
     }
 
@@ -564,17 +508,15 @@ class MainActivity : Activity() {
         Log.d(TAG, "Aborting")
         currentRequestId = null
         vibrate(50)
-        // Send abort to server
+        // Send abort to server via relay
         coroutineScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val baseUrl = SettingsActivity.getBaseUrl(this@MainActivity)
-                    val url = "$baseUrl/api/abort"
-                    val request = Request.Builder()
-                        .url(url)
-                        .post("".toByteArray().toRequestBody(null))
-                        .build()
-                    httpClient.newCall(request).execute()
+                    RelayClient.httpRequest(
+                        method = "POST",
+                        path = "/api/abort",
+                        body = ""
+                    )
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending abort", e)
@@ -621,10 +563,10 @@ class MainActivity : Activity() {
         coroutineScope.launch {
             try {
                 val audioData = withContext(Dispatchers.IO) {
-                    downloadAudio(audioPath)
+                    RelayClient.downloadAudio(audioPath)
                 }
 
-                if (audioData != null) {
+                if (audioData.isNotEmpty()) {
                     val tempFile = File.createTempFile("response_", ".mp3", cacheDir)
                     tempFile.writeBytes(audioData)
                     currentAudioFile = tempFile
@@ -634,7 +576,7 @@ class MainActivity : Activity() {
                     updateUIState()
                     playAudioFile(tempFile)
                 } else {
-                    Log.e(TAG, "Audio download failed")
+                    Log.e(TAG, "Audio download failed: empty data")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error downloading audio", e)
@@ -660,27 +602,14 @@ class MainActivity : Activity() {
         pauseButton.text = "Pause"
     }
 
-    private fun downloadAudio(audioPath: String): ByteArray? {
+    private suspend fun checkResponse(requestId: String): JSONObject? {
         return try {
-            val baseUrl = SettingsActivity.getBaseUrl(this)
-            val url = "$baseUrl$audioPath"
-            val request = Request.Builder().url(url).get().build()
-            val response = httpClient.newCall(request).execute()
-            if (response.isSuccessful) response.body?.bytes() else null
-        } catch (e: Exception) {
-            Log.e(TAG, "Error downloading audio", e)
-            null
-        }
-    }
-
-    private fun checkResponse(requestId: String): JSONObject? {
-        return try {
-            val baseUrl = SettingsActivity.getBaseUrl(this)
-            val url = "$baseUrl/api/response/$requestId"
-            val request = Request.Builder().url(url).get().build()
-            val response = httpClient.newCall(request).execute()
-            if (response.isSuccessful) {
-                JSONObject(response.body?.string() ?: "{}")
+            val response = RelayClient.httpRequest(
+                method = "GET",
+                path = "/api/response/$requestId"
+            )
+            if (response.optBoolean("success", false)) {
+                JSONObject(response.optString("body", "{}"))
             } else null
         } catch (e: Exception) {
             Log.e(TAG, "Error checking response", e)
@@ -692,15 +621,13 @@ class MainActivity : Activity() {
         coroutineScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val baseUrl = SettingsActivity.getBaseUrl(this@MainActivity)
-                    val url = "$baseUrl/api/response/$requestId/ack"
-                    val request = Request.Builder()
-                        .url(url)
-                        .post("".toByteArray().toRequestBody(null))
-                        .build()
-                    httpClient.newCall(request).execute()
-                    Log.d(TAG, "Ack sent for $requestId")
+                    RelayClient.httpRequest(
+                        method = "POST",
+                        path = "/api/response/$requestId/ack",
+                        body = ""
+                    )
                 }
+                Log.d(TAG, "Ack sent for $requestId")
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending ack", e)
             }
@@ -919,6 +846,5 @@ class MainActivity : Activity() {
         mediaPlayer?.release()
         mediaPlayer = null
         currentAudioFile?.delete()
-        httpClient.dispatcher.executorService.shutdown()
     }
 }

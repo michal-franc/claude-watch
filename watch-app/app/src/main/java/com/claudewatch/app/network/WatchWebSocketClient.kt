@@ -1,28 +1,23 @@
 package com.claudewatch.app.network
 
 import android.util.Log
+import com.claudewatch.app.relay.RelayClient
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import okhttp3.*
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
-class WatchWebSocketClient(
-    private val serverAddress: String
-) {
+/**
+ * WebSocket client for the watch that routes through the phone relay
+ * via Wearable DataLayer API instead of direct OkHttp connections.
+ */
+class WatchWebSocketClient {
     companion object {
         private const val TAG = "WatchWebSocket"
         private const val RECONNECT_DELAY_MS = 5000L
     }
 
-    private val client = OkHttpClient.Builder()
-        .readTimeout(0, TimeUnit.MILLISECONDS)
-        .pingInterval(30, TimeUnit.SECONDS)
-        .build()
-
-    private var webSocket: WebSocket? = null
     private var reconnectJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -42,32 +37,22 @@ class WatchWebSocketClient(
     private val _contextUsage = MutableStateFlow(ContextUsage())
     val contextUsage: StateFlow<ContextUsage> = _contextUsage
 
-    private val listener = object : WebSocketListener() {
-        override fun onOpen(webSocket: WebSocket, response: Response) {
-            Log.i(TAG, "WebSocket connected")
-            _connectionStatus.value = ConnectionStatus.CONNECTED
-        }
-
-        override fun onMessage(webSocket: WebSocket, text: String) {
-            Log.d(TAG, "Received: $text")
+    init {
+        // Register for relay callbacks
+        RelayClient.onWebSocketMessage = { text ->
+            Log.d(TAG, "Received via relay: $text")
             handleMessage(text)
         }
-
-        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-            Log.i(TAG, "WebSocket closing: $code $reason")
-            webSocket.close(1000, null)
-        }
-
-        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            Log.i(TAG, "WebSocket closed: $code $reason")
-            _connectionStatus.value = ConnectionStatus.DISCONNECTED
-            scheduleReconnect()
-        }
-
-        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            Log.e(TAG, "WebSocket error", t)
-            _connectionStatus.value = ConnectionStatus.DISCONNECTED
-            scheduleReconnect()
+        RelayClient.onWebSocketStatus = { status ->
+            Log.i(TAG, "WS status via relay: $status")
+            when (status) {
+                "connected" -> _connectionStatus.value = ConnectionStatus.CONNECTED
+                "connecting" -> _connectionStatus.value = ConnectionStatus.CONNECTING
+                "disconnected" -> {
+                    _connectionStatus.value = ConnectionStatus.DISCONNECTED
+                    scheduleReconnect()
+                }
+            }
         }
     }
 
@@ -77,27 +62,35 @@ class WatchWebSocketClient(
         _connectionStatus.value = ConnectionStatus.CONNECTING
         reconnectJob?.cancel()
 
-        val wsUrl = "ws://$serverAddress/ws"
-        Log.i(TAG, "Connecting to $wsUrl")
-
-        val request = Request.Builder()
-            .url(wsUrl)
-            .build()
-
-        webSocket = client.newWebSocket(request, listener)
+        scope.launch {
+            try {
+                RelayClient.wsConnect()
+                Log.i(TAG, "Relay WS connect requested")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to request relay WS connect", e)
+                _connectionStatus.value = ConnectionStatus.DISCONNECTED
+                scheduleReconnect()
+            }
+        }
     }
 
     fun disconnect() {
         reconnectJob?.cancel()
-        webSocket?.close(1000, "User disconnect")
-        webSocket = null
+        scope.launch {
+            try {
+                RelayClient.wsDisconnect()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to request relay WS disconnect", e)
+            }
+        }
         _connectionStatus.value = ConnectionStatus.DISCONNECTED
     }
 
     fun destroy() {
         disconnect()
+        RelayClient.onWebSocketMessage = null
+        RelayClient.onWebSocketStatus = null
         scope.cancel()
-        client.dispatcher.executorService.shutdown()
     }
 
     private fun scheduleReconnect() {

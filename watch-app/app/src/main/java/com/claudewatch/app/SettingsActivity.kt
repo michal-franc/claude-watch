@@ -1,87 +1,60 @@
 package com.claudewatch.app
 
-import android.content.Context
-import android.content.SharedPreferences
-import android.os.Bundle
-import android.widget.Button
-import android.widget.EditText
-import android.widget.Toast
 import android.app.Activity
+import android.os.Bundle
+import android.widget.TextView
+import com.claudewatch.app.network.ConnectionStatus
+import com.claudewatch.app.relay.RelayClient
+import com.google.android.gms.wearable.Wearable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.tasks.await
 
 class SettingsActivity : Activity() {
 
-    companion object {
-        private const val PREFS_NAME = "ClaudeWatchPrefs"
-        private const val KEY_SERVER_IP = "server_ip"
-        private const val KEY_SERVER_PORT = "server_port"
-        private const val DEFAULT_IP = "192.168.1.100"
-        private const val DEFAULT_PORT = "5566"
-
-        fun getServerUrl(context: Context): String {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val ip = prefs.getString(KEY_SERVER_IP, DEFAULT_IP) ?: DEFAULT_IP
-            val port = prefs.getString(KEY_SERVER_PORT, DEFAULT_PORT) ?: DEFAULT_PORT
-            return "http://$ip:$port/transcribe"
-        }
-
-        fun getWebSocketUrl(context: Context): String {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val ip = prefs.getString(KEY_SERVER_IP, DEFAULT_IP) ?: DEFAULT_IP
-            return "ws://$ip:5567/ws"
-        }
-
-        fun getBaseUrl(context: Context): String {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val ip = prefs.getString(KEY_SERVER_IP, DEFAULT_IP) ?: DEFAULT_IP
-            val port = prefs.getString(KEY_SERVER_PORT, DEFAULT_PORT) ?: DEFAULT_PORT
-            return "http://$ip:$port"
-        }
-    }
-
-    private lateinit var ipEditText: EditText
-    private lateinit var portEditText: EditText
-    private lateinit var saveButton: Button
-    private lateinit var prefs: SharedPreferences
+    private lateinit var phoneStatusText: TextView
+    private lateinit var connectionStatusText: TextView
+    private val scope = CoroutineScope(Dispatchers.Main + Job())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
 
-        prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        phoneStatusText = findViewById(R.id.phoneStatusText)
+        connectionStatusText = findViewById(R.id.connectionStatusText)
 
-        ipEditText = findViewById(R.id.ipEditText)
-        portEditText = findViewById(R.id.portEditText)
-        saveButton = findViewById(R.id.saveButton)
+        loadPhoneInfo()
+    }
 
-        // Load saved values
-        ipEditText.setText(prefs.getString(KEY_SERVER_IP, DEFAULT_IP))
-        portEditText.setText(prefs.getString(KEY_SERVER_PORT, DEFAULT_PORT))
+    private fun loadPhoneInfo() {
+        scope.launch {
+            try {
+                val nodes = withContext(Dispatchers.IO) {
+                    Wearable.getNodeClient(this@SettingsActivity).connectedNodes.await()
+                }
+                if (nodes.isNotEmpty()) {
+                    val node = nodes.first()
+                    phoneStatusText.text = node.displayName
+                    phoneStatusText.setTextColor(getColor(android.R.color.holo_green_light))
+                } else {
+                    phoneStatusText.text = "No phone connected"
+                    phoneStatusText.setTextColor(getColor(android.R.color.holo_red_light))
+                }
+            } catch (e: Exception) {
+                phoneStatusText.text = "Error: ${e.message}"
+                phoneStatusText.setTextColor(getColor(android.R.color.holo_red_light))
+            }
 
-        saveButton.setOnClickListener {
-            saveSettings()
+            // Show WebSocket relay status
+            val wsStatus = RelayClient.onWebSocketStatus
+            connectionStatusText.text = when {
+                wsStatus != null -> "Relay active"
+                else -> "Relay idle"
+            }
         }
     }
 
-    private fun saveSettings() {
-        val ip = ipEditText.text.toString().trim()
-        val port = portEditText.text.toString().trim()
-
-        if (ip.isEmpty()) {
-            Toast.makeText(this, "IP address required", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        if (port.isEmpty()) {
-            Toast.makeText(this, "Port required", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        prefs.edit()
-            .putString(KEY_SERVER_IP, ip)
-            .putString(KEY_SERVER_PORT, port)
-            .apply()
-
-        Toast.makeText(this, "Settings saved", Toast.LENGTH_SHORT).show()
-        finish()
+    override fun onDestroy() {
+        super.onDestroy()
+        scope.cancel()
     }
 }

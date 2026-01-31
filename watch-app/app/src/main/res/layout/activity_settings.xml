@@ -28,51 +28,38 @@
                 android:textStyle="bold"
                 android:layout_marginBottom="16dp" />
 
+            <!-- Phone relay status -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Server IP"
+                android:text="Phone Relay"
                 android:textColor="@android:color/darker_gray"
                 android:textSize="12sp" />
 
-            <EditText
-                android:id="@+id/ipEditText"
+            <TextView
+                android:id="@+id/phoneStatusText"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="192.168.1.100"
-                android:inputType="textUri"
+                android:text="Searching..."
                 android:textColor="@android:color/white"
-                android:textColorHint="@android:color/darker_gray"
-                android:backgroundTint="@android:color/white"
                 android:textSize="14sp"
                 android:layout_marginBottom="12dp" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Port"
+                android:text="Connection"
                 android:textColor="@android:color/darker_gray"
                 android:textSize="12sp" />
 
-            <EditText
-                android:id="@+id/portEditText"
+            <TextView
+                android:id="@+id/connectionStatusText"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="5566"
-                android:inputType="number"
+                android:text="--"
                 android:textColor="@android:color/white"
-                android:textColorHint="@android:color/darker_gray"
-                android:backgroundTint="@android:color/white"
                 android:textSize="14sp"
                 android:layout_marginBottom="16dp" />
-
-            <Button
-                android:id="@+id/saveButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Save"
-                android:textColor="@android:color/white"
-                android:backgroundTint="@android:color/holo_green_dark" />
 
         </LinearLayout>
     </ScrollView>
