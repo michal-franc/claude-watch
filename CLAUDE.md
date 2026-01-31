@@ -71,16 +71,24 @@ adb -s <watch> shell am force-stop com.claudewatch.app
 - Uses `--output-format stream-json` for structured I/O
 - Output displayed in tmux session `claude-watch` via tail
 - Permission hook intercepts sensitive tool calls
+- Watch connects to server through phone relay (2-layer): Watch → Phone (Wearable DataLayer) → Server (WebSocket)
+- Phone relay: `RelayWebSocketManager` (singleton) holds the server WebSocket, forwards messages to watch via `MessageClient`
+- Watch relay: `RelayClient` (singleton) sends/receives via DataLayer, `WatchWebSocketClient` manages state flows for UI
 
 ## Server Endpoints
 
 ### HTTP (port 5566)
+- `GET /health` - Health check
 - `POST /transcribe` - Receive audio, transcribe, launch Claude
 - `GET/POST /api/config` - Settings (model, language, response_mode)
 - `GET /api/chat` - Chat history, state, current prompt
+- `GET /api/history` - Request history
 - `GET /api/response/<id>` - Poll for Claude response
+- `POST /api/response/<id>/ack` - Acknowledge response
 - `GET /api/audio/<id>` - TTS audio file
 - `POST /api/message` - Text message from phone app
+- `POST /api/claude/restart` - Restart Claude process
+- `POST /api/prompt/respond` - Respond to Claude prompt
 - `POST /api/permission/request` - Hook submits permission
 - `GET /api/permission/status/<id>` - Hook polls for decision
 - `POST /api/permission/respond` - App approves/denies
@@ -89,9 +97,13 @@ adb -s <watch> shell am force-stop com.claudewatch.app
 - `state` - Claude status (idle, listening, thinking, speaking)
 - `chat` - New message
 - `history` - Chat history on connect
+- `prompt` - Permission prompt update
 - `permission` - Permission request
 - `permission_resolved` - Permission decision
 - `usage` - Context/cost stats
+- `text_chunk` - Streaming text chunk from Claude
+- `tool` - Tool use notification
+- `clients` - Connected clients list
 
 ## Permission System
 
