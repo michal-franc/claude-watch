@@ -264,6 +264,7 @@ class MainActivity : AppCompatActivity() {
 
         val json = JSONObject().apply {
             put("text", text)
+            put("response_mode", "text")
         }
 
         val request = Request.Builder()
@@ -349,6 +350,7 @@ class MainActivity : AppCompatActivity() {
 
                     val request = Request.Builder()
                         .url(url)
+                        .header("X-Response-Mode", "text")
                         .post(file.asRequestBody("audio/mp4".toMediaType()))
                         .build()
 

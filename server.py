@@ -33,14 +33,9 @@ from aiohttp import web
 from logger import logger
 from claude_wrapper import ClaudeWrapper
 
-# Load Deepgram API key
-API_KEY_FILE = "/tmp/deepgram_api_key"
-try:
-    with open(API_KEY_FILE) as f:
-        api_key = f.read().strip()
-        os.environ["DEEPGRAM_API_KEY"] = api_key
-except FileNotFoundError:
-    print(f"Error: API key file not found at {API_KEY_FILE}", file=sys.stderr)
+# Load Deepgram API key from environment (set via EnvironmentFile in systemd)
+if not os.environ.get("DEEPGRAM_API_KEY"):
+    print("Error: DEEPGRAM_API_KEY environment variable not set", file=sys.stderr)
     sys.exit(1)
 
 from deepgram import DeepgramClient
@@ -104,8 +99,8 @@ claude_state = {
 chat_history = []
 MAX_CHAT_HISTORY = 50
 
-# Connected WebSocket clients
-websocket_clients = set()
+# Connected WebSocket clients: ws -> {device_type, device_id, connected_at, ip}
+websocket_clients = {}
 
 # Active Claude wrapper (for cancellation)
 active_claude_wrapper: ClaudeWrapper = None
@@ -127,17 +122,17 @@ def broadcast_message(message: dict):
         return
 
     async def _broadcast():
-        dead_clients = set()
+        dead_clients = []
         msg_json = json.dumps(message)
         for ws in websocket_clients:
             try:
                 await ws.send_str(msg_json)
             except Exception as e:
                 logger.debug(f"WebSocket send error: {e}")
-                dead_clients.add(ws)
+                dead_clients.append(ws)
         # Remove dead clients
         for ws in dead_clients:
-            websocket_clients.discard(ws)
+            websocket_clients.pop(ws, None)
 
     try:
         asyncio.run_coroutine_threadsafe(_broadcast(), ws_loop)
@@ -538,6 +533,15 @@ class DictationHandler(BaseHTTPRequestHandler):
             print(f"[PARSE] Method: {self.command}, Path: {self.path}")
         return result
 
+    def send_json(self, status_code, data, cors=True):
+        """Send a JSON response with standard headers"""
+        self.send_response(status_code)
+        self.send_header('Content-Type', 'application/json')
+        if cors:
+            self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
+
     def do_POST(self):
         content_length = int(self.headers.get('Content-Length', 0))
         content_type = self.headers.get('Content-Type', 'unknown')
@@ -560,6 +564,11 @@ class DictationHandler(BaseHTTPRequestHandler):
         # Handle prompt response (selecting an option)
         if self.path == '/api/prompt/respond':
             self.handle_prompt_respond(content_length)
+            return
+
+        # Handle Claude restart
+        if self.path == '/api/claude/restart':
+            self.handle_claude_restart()
             return
 
         # Handle permission request from hook
@@ -668,17 +677,14 @@ class DictationHandler(BaseHTTPRequestHandler):
                     'details': 'Skipped (no speech)'
                 })
 
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({
+            self.send_json(200, {
                 'status': 'ok',
                 'request_id': request_id,
                 'transcript': transcript or '',
                 'response_enabled': response_mode != 'disabled',
                 'response_mode': response_mode,
                 'message': 'No speech detected' if not transcript else None
-            }).encode())
+            }, cors=False)
 
         except Exception as e:
             print(f"Error: {e}")
@@ -710,20 +716,14 @@ class DictationHandler(BaseHTTPRequestHandler):
                 if len(request_history) > MAX_HISTORY:
                     request_history.pop()
 
-            self.send_response(500)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({
+            self.send_json(500, {
                 'status': 'error',
                 'message': str(e)
-            }).encode())
+            }, cors=False)
 
     def do_GET(self):
         if self.path == '/health':
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({'status': 'ok'}).encode())
+            self.send_json(200, {'status': 'ok'}, cors=False)
         elif self.path.startswith('/api/response/'):
             self.handle_response_check()
         elif self.path.startswith('/api/permission/status/'):
@@ -731,39 +731,45 @@ class DictationHandler(BaseHTTPRequestHandler):
         elif self.path.startswith('/api/audio/'):
             self.handle_audio_file()
         elif self.path == '/api/history':
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
+            self.send_json(200, {
                 'history': request_history,
                 'workdir': claude_workdir
-            }).encode())
+            })
         elif self.path == '/api/config':
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
+            self.send_json(200, {
                 'config': transcription_config,
                 'response_config': response_config,
                 'options': CONFIG_OPTIONS
-            }).encode())
+            })
         elif self.path == '/api/chat':
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
+            self.send_json(200, {
                 'messages': chat_history,
                 'state': claude_state,
                 'prompt': current_prompt
-            }).encode())
+            })
         elif self.path == '/' or self.path == '/dashboard':
             self.serve_dashboard()
         else:
             self.send_response(404)
             self.end_headers()
+
+    def handle_claude_restart(self):
+        """Handle POST /api/claude/restart to restart the Claude process"""
+        global active_claude_wrapper
+        try:
+            wrapper = ClaudeWrapper._instance
+            if wrapper:
+                wrapper.shutdown()
+                active_claude_wrapper = None
+            # Clear chat history
+            chat_history.clear()
+            set_claude_state("idle")
+            broadcast_message({"type": "history", "messages": []})
+            logger.info("[SERVER] Claude process restarted")
+            self.send_json(200, {"status": "restarted"})
+        except Exception as e:
+            logger.error(f"[SERVER] Error restarting Claude: {e}")
+            self.send_json(500, {"error": str(e)})
 
     def handle_config_update(self, content_length):
         """Handle POST /api/config to update transcription settings"""
@@ -800,68 +806,41 @@ class DictationHandler(BaseHTTPRequestHandler):
                     errors.append(f"Invalid response_mode: {new_config['response_mode']}")
 
             if errors:
-                self.send_response(400)
-                self.send_header('Content-Type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    'status': 'error',
-                    'errors': errors
-                }).encode())
+                self.send_json(400, {'status': 'error', 'errors': errors})
             else:
                 print(f"[CONFIG] Updated: {transcription_config}, response: {response_config}")
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                self.wfile.write(json.dumps({
+                self.send_json(200, {
                     'status': 'ok',
                     'config': transcription_config,
                     'response_config': response_config
-                }).encode())
+                })
 
         except json.JSONDecodeError as e:
-            self.send_response(400)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                'status': 'error',
-                'message': f'Invalid JSON: {e}'
-            }).encode())
+            self.send_json(400, {'status': 'error', 'message': f'Invalid JSON: {e}'})
 
     def handle_response_check(self):
         """Handle GET /api/response/<id> to check Claude's response"""
         request_id = self.path.split('/')[-1]
 
         if request_id not in claude_responses:
-            self.send_response(404)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
+            self.send_json(404, {
                 'status': 'not_found',
                 'message': 'Request ID not found'
-            }).encode())
+            })
             return
 
         response_data = claude_responses[request_id]
 
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-
         if response_data['status'] == 'pending':
-            self.wfile.write(json.dumps({
+            self.send_json(200, {
                 'status': 'pending',
                 'message': 'Claude is still processing'
-            }).encode())
+            })
         elif response_data['status'] == 'disabled':
-            self.wfile.write(json.dumps({
+            self.send_json(200, {
                 'status': 'disabled',
                 'message': 'Responses were disabled'
-            }).encode())
+            })
         else:
             # Response is ready
             response_text = response_data.get('response', '')
@@ -871,19 +850,18 @@ class DictationHandler(BaseHTTPRequestHandler):
 
             # Check response mode
             if audio_path and os.path.exists(audio_path):
-                # Audio response available
-                self.wfile.write(json.dumps({
+                self.send_json(200, {
                     'status': 'completed',
                     'type': 'audio',
                     'response': response_text,
                     'audio_url': f'/api/audio/{request_id}'
-                }).encode())
+                })
             else:
-                self.wfile.write(json.dumps({
+                self.send_json(200, {
                     'status': 'completed',
                     'type': 'text',
                     'response': response_text
-                }).encode())
+                })
 
     def handle_response_ack(self):
         """Handle POST /api/response/<id>/ack - watch confirms receipt"""
@@ -892,11 +870,7 @@ class DictationHandler(BaseHTTPRequestHandler):
         request_id = parts[3] if len(parts) >= 4 else ""
 
         if request_id not in claude_responses:
-            self.send_response(404)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({'status': 'not_found'}).encode())
+            self.send_json(404, {'status': 'not_found'})
             return
 
         response_data = claude_responses[request_id]
@@ -913,11 +887,7 @@ class DictationHandler(BaseHTTPRequestHandler):
             })
             print(f"[ACK] Watch confirmed receipt for {request_id}")
 
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(json.dumps({'status': 'ok'}).encode())
+        self.send_json(200, {'status': 'ok'})
 
     def handle_text_message(self, content_length):
         """Handle POST /api/message for text messages from phone app"""
@@ -927,14 +897,7 @@ class DictationHandler(BaseHTTPRequestHandler):
             text = data.get('text', '').strip()
 
             if not text:
-                self.send_response(400)
-                self.send_header('Content-Type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    'status': 'error',
-                    'message': 'No text provided'
-                }).encode())
+                self.send_json(400, {'status': 'error', 'message': 'No text provided'})
                 return
 
             request_id = str(uuid.uuid4())[:8]
@@ -988,25 +951,14 @@ class DictationHandler(BaseHTTPRequestHandler):
                 entry['status'] = 'error'
                 entry['error'] = 'Failed to launch Claude'
 
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
+            self.send_json(200, {
                 'status': 'ok',
                 'request_id': request_id,
                 'launched': launched
-            }).encode())
+            })
 
         except json.JSONDecodeError as e:
-            self.send_response(400)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                'status': 'error',
-                'message': f'Invalid JSON: {e}'
-            }).encode())
+            self.send_json(400, {'status': 'error', 'message': f'Invalid JSON: {e}'})
 
     def handle_prompt_respond(self, content_length):
         """Handle POST /api/prompt/respond to answer a permission prompt.
@@ -1023,24 +975,13 @@ class DictationHandler(BaseHTTPRequestHandler):
 
             # Phase 1: Permission prompts are auto-accepted via --permission-mode acceptEdits
             # This endpoint is kept for future Phase 2 implementation
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
+            self.send_json(200, {
                 'status': 'ok',
                 'message': 'Permission handling disabled in Phase 1 (auto-accept mode)'
-            }).encode())
+            })
 
         except json.JSONDecodeError as e:
-            self.send_response(400)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                'status': 'error',
-                'message': f'Invalid JSON: {e}'
-            }).encode())
+            self.send_json(400, {'status': 'error', 'message': f'Invalid JSON: {e}'})
 
     def handle_permission_request(self, content_length):
         """Handle POST /api/permission/request from the permission hook."""
@@ -1128,51 +1069,26 @@ class DictationHandler(BaseHTTPRequestHandler):
                     'permission_request_id': request_id
                 })
 
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                'status': 'ok',
-                'request_id': request_id
-            }).encode())
+            self.send_json(200, {'status': 'ok', 'request_id': request_id})
 
         except Exception as e:
             logger.error(f"[PERMISSION] Request error: {e}")
-            self.send_response(500)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                'status': 'error',
-                'message': str(e)
-            }).encode())
+            self.send_json(500, {'status': 'error', 'message': str(e)})
 
     def handle_permission_status(self):
         """Handle GET /api/permission/status/<id> - hook polls for decision."""
         request_id = self.path.split('/')[-1]
 
         if request_id not in pending_permissions:
-            self.send_response(404)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                'status': 'not_found'
-            }).encode())
+            self.send_json(404, {'status': 'not_found'})
             return
 
         perm = pending_permissions[request_id]
-
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(json.dumps({
+        self.send_json(200, {
             'status': perm['status'],
             'decision': perm['decision'],
             'reason': perm['reason']
-        }).encode())
+        })
 
     def handle_permission_respond(self, content_length):
         """Handle POST /api/permission/respond - mobile app approves/denies."""
@@ -1185,13 +1101,7 @@ class DictationHandler(BaseHTTPRequestHandler):
             reason = data.get('reason', '')
 
             if request_id not in pending_permissions:
-                self.send_response(404)
-                self.send_header('Content-Type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    'status': 'not_found'
-                }).encode())
+                self.send_json(404, {'status': 'not_found'})
                 return
 
             # Update permission status
@@ -1227,24 +1137,11 @@ class DictationHandler(BaseHTTPRequestHandler):
                 'decision': decision
             })
 
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                'status': 'ok'
-            }).encode())
+            self.send_json(200, {'status': 'ok'})
 
         except Exception as e:
             logger.error(f"[PERMISSION] Response error: {e}")
-            self.send_response(500)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                'status': 'error',
-                'message': str(e)
-            }).encode())
+            self.send_json(500, {'status': 'error', 'message': str(e)})
 
     def handle_audio_file(self):
         """Serve audio file for a request"""
@@ -1295,13 +1192,49 @@ class DictationHandler(BaseHTTPRequestHandler):
 WS_PORT = 5567
 
 
+def get_clients_list():
+    """Get serializable list of connected clients"""
+    clients = []
+    for ws, info in websocket_clients.items():
+        clients.append({
+            "device_type": info["device_type"],
+            "device_id": info["device_id"],
+            "connected_at": info["connected_at"],
+            "ip": info["ip"],
+        })
+    return clients
+
+
+async def broadcast_clients():
+    """Broadcast updated client list to all connected clients"""
+    msg = json.dumps({"type": "clients", "clients": get_clients_list()})
+    dead_clients = []
+    for ws in websocket_clients:
+        try:
+            await ws.send_str(msg)
+        except Exception:
+            dead_clients.append(ws)
+    for ws in dead_clients:
+        websocket_clients.pop(ws, None)
+
+
 async def websocket_handler(request):
     """Handle WebSocket connections"""
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
-    websocket_clients.add(ws)
-    logger.info(f"[WS] Client connected. Total clients: {len(websocket_clients)}")
+    # Extract client metadata from query params
+    device_type = request.query.get("device", "unknown")
+    device_id = request.query.get("id", "")
+    client_ip = request.remote or "unknown"
+
+    websocket_clients[ws] = {
+        "device_type": device_type,
+        "device_id": device_id,
+        "connected_at": datetime.now().isoformat(),
+        "ip": client_ip,
+    }
+    logger.info(f"[WS] Client connected: {device_type} ({device_id or client_ip}). Total: {len(websocket_clients)}")
 
     # Send current state and chat history on connect
     try:
@@ -1317,6 +1250,9 @@ async def websocket_handler(request):
     except Exception as e:
         logger.error(f"[WS] Error sending initial state: {e}")
 
+    # Broadcast updated client list
+    await broadcast_clients()
+
     try:
         async for msg in ws:
             # Handle incoming messages (ping/pong, etc)
@@ -1325,8 +1261,9 @@ async def websocket_handler(request):
             elif msg.type == web.WSMsgType.ERROR:
                 logger.error(f"[WS] Error: {ws.exception()}")
     finally:
-        websocket_clients.discard(ws)
-        logger.info(f"[WS] Client disconnected. Total clients: {len(websocket_clients)}")
+        websocket_clients.pop(ws, None)
+        logger.info(f"[WS] Client disconnected. Total: {len(websocket_clients)}")
+        await broadcast_clients()
 
     return ws
 
@@ -1334,6 +1271,11 @@ async def websocket_handler(request):
 async def ws_health_handler(request):
     """Health check for WebSocket server"""
     return web.json_response({"status": "ok", "clients": len(websocket_clients)})
+
+
+async def ws_clients_handler(request):
+    """Return list of connected clients"""
+    return web.json_response({"clients": get_clients_list()})
 
 
 async def start_websocket_server():
@@ -1344,6 +1286,7 @@ async def start_websocket_server():
     app = web.Application()
     app.router.add_get('/ws', websocket_handler)
     app.router.add_get('/health', ws_health_handler)
+    app.router.add_get('/clients', ws_clients_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()

@@ -129,7 +129,8 @@ class WebSocketClient(
         _connectionStatus.value = ConnectionStatus.CONNECTING
         reconnectJob?.cancel()
 
-        val wsUrl = "ws://$serverAddress/ws"
+        val deviceId = android.os.Build.MODEL ?: "phone"
+        val wsUrl = "ws://$serverAddress/ws?device=phone&id=${java.net.URLEncoder.encode(deviceId, "UTF-8")}"
         Log.i(TAG, "Connecting to $wsUrl")
 
         val request = Request.Builder()

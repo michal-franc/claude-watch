@@ -534,6 +534,350 @@ class TestPermissionEndpoints:
         handler.send_response.assert_called_with(404)
 
 
+class TestConfigEndpoints:
+    """Tests for config GET and POST endpoints"""
+
+    def setup_method(self):
+        """Save original config"""
+        self.orig_config = server.transcription_config.copy()
+        self.orig_response = server.response_config.copy()
+
+    def teardown_method(self):
+        """Restore original config"""
+        server.transcription_config.update(self.orig_config)
+        server.response_config.update(self.orig_response)
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    def test_get_config(self):
+        """Should return current config and options"""
+        handler = server.DictationHandler()
+        handler.path = '/api/config'
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.do_GET()
+
+        handler.send_response.assert_called_with(200)
+        data = json.loads(handler.wfile.getvalue())
+        assert 'config' in data
+        assert 'options' in data
+        assert 'response_config' in data
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    def test_post_config_valid_model(self):
+        """Should update model when valid"""
+        valid_model = server.CONFIG_OPTIONS['models'][0]
+        body = json.dumps({'model': valid_model}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = '/api/config'
+        handler.headers = {'Content-Length': str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_config_update(len(body))
+
+        handler.send_response.assert_called_with(200)
+        data = json.loads(handler.wfile.getvalue())
+        assert data['status'] == 'ok'
+        assert data['config']['model'] == valid_model
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    def test_post_config_invalid_model(self):
+        """Should return error for invalid model"""
+        body = json.dumps({'model': 'nonexistent-model'}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = '/api/config'
+        handler.headers = {'Content-Length': str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_config_update(len(body))
+
+        handler.send_response.assert_called_with(400)
+        data = json.loads(handler.wfile.getvalue())
+        assert data['status'] == 'error'
+        assert len(data['errors']) > 0
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    def test_post_config_invalid_json(self):
+        """Should return 400 for invalid JSON"""
+        body = b'not json'
+
+        handler = server.DictationHandler()
+        handler.path = '/api/config'
+        handler.headers = {'Content-Length': str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_config_update(len(body))
+
+        handler.send_response.assert_called_with(400)
+        data = json.loads(handler.wfile.getvalue())
+        assert data['status'] == 'error'
+
+
+class TestChatEndpoint:
+    """Tests for GET /api/chat"""
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    def test_get_chat(self):
+        """Should return chat messages, state, and prompt"""
+        server.chat_history.clear()
+        server.chat_history.append({'role': 'user', 'content': 'hello'})
+
+        handler = server.DictationHandler()
+        handler.path = '/api/chat'
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.do_GET()
+
+        handler.send_response.assert_called_with(200)
+        data = json.loads(handler.wfile.getvalue())
+        assert 'messages' in data
+        assert 'state' in data
+        assert 'prompt' in data
+        assert len(data['messages']) == 1
+        assert data['messages'][0]['content'] == 'hello'
+
+        # Cleanup
+        server.chat_history.clear()
+
+
+class TestTextMessageEndpoint:
+    """Tests for POST /api/message"""
+
+    def setup_method(self):
+        server.last_claude_launch = 0
+        server.claude_workdir = "/tmp"
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    @patch('server.run_claude')
+    def test_text_message_success(self, mock_run_claude):
+        """Should accept text and launch Claude"""
+        mock_run_claude.return_value = True
+        body = json.dumps({'text': 'hello claude'}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = '/api/message'
+        handler.headers = {'Content-Length': str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_text_message(len(body))
+
+        handler.send_response.assert_called_with(200)
+        data = json.loads(handler.wfile.getvalue())
+        assert data['status'] == 'ok'
+        assert data['launched'] is True
+        mock_run_claude.assert_called_once()
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    def test_text_message_empty(self):
+        """Should return 400 for empty text"""
+        body = json.dumps({'text': ''}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = '/api/message'
+        handler.headers = {'Content-Length': str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_text_message(len(body))
+
+        handler.send_response.assert_called_with(400)
+        data = json.loads(handler.wfile.getvalue())
+        assert data['status'] == 'error'
+        assert 'No text' in data['message']
+
+
+class TestResponseCheckEndpoint:
+    """Tests for GET /api/response/<id>"""
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    def test_response_not_found(self):
+        """Should return 404 for unknown request ID"""
+        handler = server.DictationHandler()
+        handler.path = '/api/response/unknown123'
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_response_check()
+
+        handler.send_response.assert_called_with(404)
+        data = json.loads(handler.wfile.getvalue())
+        assert data['status'] == 'not_found'
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    def test_response_pending(self):
+        """Should return pending status"""
+        server.claude_responses['test-resp'] = {'status': 'pending'}
+
+        handler = server.DictationHandler()
+        handler.path = '/api/response/test-resp'
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_response_check()
+
+        handler.send_response.assert_called_with(200)
+        data = json.loads(handler.wfile.getvalue())
+        assert data['status'] == 'pending'
+
+        del server.claude_responses['test-resp']
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    def test_response_completed_text(self):
+        """Should return completed text response"""
+        server.claude_responses['test-done'] = {
+            'status': 'completed',
+            'response': 'Hello back!'
+        }
+
+        handler = server.DictationHandler()
+        handler.path = '/api/response/test-done'
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_response_check()
+
+        handler.send_response.assert_called_with(200)
+        data = json.loads(handler.wfile.getvalue())
+        assert data['status'] == 'completed'
+        assert data['type'] == 'text'
+        assert data['response'] == 'Hello back!'
+
+        del server.claude_responses['test-done']
+
+
+class TestClaudeRestartEndpoint:
+    """Tests for POST /api/claude/restart"""
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    @patch('server.broadcast_message')
+    @patch('server.ClaudeWrapper')
+    def test_restart_with_running_process(self, mock_wrapper_class, mock_broadcast):
+        """Should shutdown wrapper and clear history"""
+        mock_instance = MagicMock()
+        mock_wrapper_class._instance = mock_instance
+        server.chat_history.append({'role': 'user', 'content': 'old message'})
+
+        handler = server.DictationHandler()
+        handler.path = '/api/claude/restart'
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_claude_restart()
+
+        handler.send_response.assert_called_with(200)
+        data = json.loads(handler.wfile.getvalue())
+        assert data['status'] == 'restarted'
+        mock_instance.shutdown.assert_called_once()
+        assert len(server.chat_history) == 0
+
+        mock_wrapper_class._instance = None
+
+    @patch.object(server.DictationHandler, '__init__', lambda x, *args: None)
+    @patch('server.broadcast_message')
+    @patch('server.ClaudeWrapper')
+    def test_restart_without_running_process(self, mock_wrapper_class, mock_broadcast):
+        """Should succeed even when no process is running"""
+        mock_wrapper_class._instance = None
+
+        handler = server.DictationHandler()
+        handler.path = '/api/claude/restart'
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_claude_restart()
+
+        handler.send_response.assert_called_with(200)
+        data = json.loads(handler.wfile.getvalue())
+        assert data['status'] == 'restarted'
+
+
+class TestConnectedClients:
+    """Tests for WebSocket client tracking"""
+
+    def test_get_clients_list_empty(self):
+        """Should return empty list when no clients"""
+        server.websocket_clients.clear()
+        assert server.get_clients_list() == []
+
+    def test_get_clients_list_with_clients(self):
+        """Should return client metadata"""
+        mock_ws = MagicMock()
+        server.websocket_clients[mock_ws] = {
+            'device_type': 'phone',
+            'device_id': 'Pixel 7',
+            'connected_at': '2026-01-31T12:00:00',
+            'ip': '198.51.100.1',
+        }
+
+        clients = server.get_clients_list()
+        assert len(clients) == 1
+        assert clients[0]['device_type'] == 'phone'
+        assert clients[0]['device_id'] == 'Pixel 7'
+        assert clients[0]['ip'] == '198.51.100.1'
+
+        server.websocket_clients.clear()
+
+    def test_get_clients_list_multiple(self):
+        """Should return all connected clients"""
+        ws1 = MagicMock()
+        ws2 = MagicMock()
+        server.websocket_clients[ws1] = {
+            'device_type': 'phone',
+            'device_id': 'Pixel 7',
+            'connected_at': '2026-01-31T12:00:00',
+            'ip': '198.51.100.1',
+        }
+        server.websocket_clients[ws2] = {
+            'device_type': 'dashboard',
+            'device_id': '',
+            'connected_at': '2026-01-31T12:01:00',
+            'ip': '127.0.0.1',
+        }
+
+        clients = server.get_clients_list()
+        assert len(clients) == 2
+        device_types = {c['device_type'] for c in clients}
+        assert device_types == {'phone', 'dashboard'}
+
+        server.websocket_clients.clear()
+
+
 class TestCheckHooksConfigured:
     """Tests for check_hooks_configured function"""
 

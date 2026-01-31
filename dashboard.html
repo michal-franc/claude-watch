@@ -254,6 +254,18 @@
       color: #60a5fa;
     }
 
+    /* Permission step styling */
+    .workflow-step.permission .step-icon {
+      background: #78350f;
+      color: #f59e0b;
+    }
+    .workflow-step.permission .step-label {
+      color: #f59e0b;
+    }
+    .workflow-step.permission:not(:last-child)::after {
+      background: #f59e0b;
+    }
+
     /* Transcript preview */
     .transcript-preview {
       font-size: 0.9rem;
@@ -634,7 +646,7 @@
     <header>
       <div class="header-left">
         <h1>Claude Watch</h1>
-        <span class="config-badge" v-if="config.model">{{ config.model }} / {{ config.language }} / {{ responseConfig.mode }}</span>
+        <span class="config-badge" v-if="config.model">{{ config.model }} / {{ config.language }}</span>
       </div>
       <div style="display: flex; align-items: center; gap: 12px;">
         <div class="workdir" v-if="workdir">{{ workdir }}</div>
@@ -658,6 +670,16 @@
         <span>{{ stats.errors }} errors</span>
       </div>
       <div style="flex: 1"></div>
+      <div class="status-item" style="gap: 6px;">
+        <span class="dot" :class="wsConnected ? 'green' : 'red'"></span>
+        <span>WS</span>
+        <span v-if="connectedClients.length" style="margin-left: 4px; color: #666;">|</span>
+        <span v-for="c in connectedClients" :key="c.device_type + c.device_id + c.connected_at"
+              :title="(c.device_id || c.device_type) + ' (' + c.ip + ')'"
+              style="font-size: 0.85rem; cursor: default;">
+          {{ c.device_type === 'phone' ? '&#128241;' : c.device_type === 'watch' ? '&#8986;' : c.device_type === 'dashboard' ? '&#128421;' : '&#10067;' }}
+        </span>
+      </div>
       <div class="auto-refresh">
         <input type="checkbox" id="autoRefresh" v-model="autoRefresh">
         <label for="autoRefresh">Auto-refresh</label>
@@ -739,11 +761,12 @@
             v-for="(step, index) in item.steps"
             :key="index"
             class="workflow-step"
-            :class="step.status"
+            :class="[step.status, { permission: step.name === 'permission' && step.status === 'in_progress' }]"
             @click="openModal(item, step)"
           >
             <div class="step-icon">
-              <span v-if="step.status === 'completed'">&#10003;</span>
+              <span v-if="step.name === 'permission' && step.status === 'in_progress'">&#x1F6E1;</span>
+              <span v-else-if="step.status === 'completed'">&#10003;</span>
               <span v-else-if="step.status === 'error'">&#10005;</span>
               <span v-else-if="step.status === 'skipped'">&#8211;</span>
               <span v-else-if="step.status === 'in_progress'">&#8987;</span>
@@ -942,6 +965,47 @@
           </div>
         </template>
 
+        <!-- Response broadcast step -->
+        <template v-if="modal.step?.name === 'response_broadcast'">
+          <div class="modal-row">
+            <span class="modal-label">Timestamp</span>
+            <span class="modal-value">{{ formatFullTime(modal.step.timestamp) }}</span>
+          </div>
+          <div class="modal-row">
+            <span class="modal-label">Delivery</span>
+            <span class="modal-value">{{ modal.step.details }}</span>
+          </div>
+        </template>
+
+        <!-- Permission step -->
+        <template v-if="modal.step?.name === 'permission'">
+          <div class="modal-row">
+            <span class="modal-label">Timestamp</span>
+            <span class="modal-value">{{ formatFullTime(modal.step.timestamp) }}</span>
+          </div>
+          <div class="modal-row">
+            <span class="modal-label">Tool</span>
+            <span class="modal-value mono">{{ modal.step.label?.replace('Permission: ', '') }}</span>
+          </div>
+          <div class="modal-row">
+            <span class="modal-label">Context</span>
+            <span class="modal-value">{{ modal.step.details }}</span>
+          </div>
+          <div class="modal-row" v-if="modal.step.status !== 'in_progress'">
+            <span class="modal-label">Decision</span>
+            <span class="modal-value" :style="{ color: modal.step.status === 'completed' ? '#4ade80' : '#f87171' }">
+              {{ modal.step.status === 'completed' ? 'Allowed' : 'Denied' }}
+            </span>
+          </div>
+          <div class="modal-row" v-if="modal.step.duration_ms">
+            <span class="modal-label">Wait time</span>
+            <span class="modal-value">{{ formatDuration(modal.step.duration_ms) }}</span>
+          </div>
+          <div v-if="modal.step.status === 'in_progress'" style="font-size: 0.8rem; color: #f59e0b; margin-top: 12px;">
+            Waiting for user response...
+          </div>
+        </template>
+
         <!-- Error step -->
         <template v-if="modal.step?.name === 'error' || modal.step?.error">
           <div class="modal-row">
@@ -998,25 +1062,11 @@
           </div>
         </div>
 
-        <div style="border-top: 1px solid #333; margin: 20px 0; padding-top: 16px;">
-          <div style="font-size: 0.9rem; font-weight: 600; margin-bottom: 12px; color: #ccc;">Watch Response</div>
-        </div>
-
-        <div class="form-group">
-          <label>Response Mode</label>
-          <select v-model="settingsModal.form.response_mode">
-            <option v-for="m in configOptions.response_modes" :key="m" :value="m">{{ m }}</option>
-          </select>
-          <div style="font-size: 0.75rem; color: #666; margin-top: 4px;">
-            <span v-if="settingsModal.form.response_mode === 'text'">Send text notification to watch</span>
-            <span v-else-if="settingsModal.form.response_mode === 'audio'">Play audio response on watch (TTS)</span>
-            <span v-else-if="settingsModal.form.response_mode === 'disabled'">Don't send responses to watch</span>
-          </div>
-        </div>
-
         <div class="form-actions">
           <button class="btn btn-primary" @click="saveSettings">Save</button>
           <button class="btn btn-secondary" @click="closeSettings">Cancel</button>
+          <div style="flex: 1"></div>
+          <button class="btn" style="background: #dc3545; color: white;" @click="restartClaude">Restart Claude</button>
         </div>
       </div>
     </div>
@@ -1036,13 +1086,16 @@
         const configOptions = ref({ models: [], languages: [], response_modes: [] })
         const settingsModal = ref({
           visible: false,
-          form: { model: '', language: '', smart_format: true, punctuate: true, response_mode: 'text' }
+          form: { model: '', language: '', smart_format: true, punctuate: true }
         })
         const chatMessages = ref([])
         const chatState = ref({ status: 'idle' })
         const chatContainer = ref(null)
         const currentPrompt = ref(null)
+        const wsConnected = ref(false)
+        const connectedClients = ref([])
         let intervalId = null
+        let ws = null
 
         const stats = computed(() => ({
           completed: history.value.filter(h => h.status === 'completed').length,
@@ -1154,6 +1207,22 @@
           }
         }
 
+        const restartClaude = async () => {
+          if (!confirm('Restart Claude process? This will clear chat history.')) return
+          try {
+            const res = await fetch('/api/claude/restart', { method: 'POST' })
+            const data = await res.json()
+            if (data.status === 'restarted') {
+              chatMessages.value = []
+              closeSettings()
+            } else {
+              alert('Error: ' + (data.error || 'Unknown error'))
+            }
+          } catch (e) {
+            alert('Failed to restart Claude')
+          }
+        }
+
         const formatTime = (iso) => {
           const d = new Date(iso)
           return d.toLocaleTimeString()
@@ -1194,10 +1263,12 @@
         const getStepDuration = (item, index) => {
           if (!item.steps || index === 0) return null
           const currentStep = item.steps[index]
-          const prevStep = item.steps[index - 1]
-          if (!currentStep.timestamp || !prevStep.timestamp) return null
           // Don't show duration for in_progress steps
           if (currentStep.status === 'in_progress') return null
+          // Use explicit duration_ms if set on the step (e.g. permission steps)
+          if (currentStep.duration_ms) return formatDuration(currentStep.duration_ms)
+          const prevStep = item.steps[index - 1]
+          if (!currentStep.timestamp || !prevStep.timestamp) return null
           const start = new Date(prevStep.timestamp).getTime()
           const end = new Date(currentStep.timestamp).getTime()
           const duration = end - start
@@ -1214,12 +1285,107 @@
         }
 
         const openSettings = () => {
-          settingsModal.value.form = { ...config.value, response_mode: responseConfig.value.mode }
+          settingsModal.value.form = { ...config.value }
           settingsModal.value.visible = true
         }
 
         const closeSettings = () => {
           settingsModal.value.visible = false
+        }
+
+        const scrollChatToBottom = () => {
+          if (chatContainer.value) {
+            const c = chatContainer.value
+            const wasAtBottom = c.scrollHeight - c.scrollTop <= c.clientHeight + 50
+            if (wasAtBottom) {
+              setTimeout(() => { c.scrollTop = c.scrollHeight }, 50)
+            }
+          }
+        }
+
+        const connectWebSocket = () => {
+          const wsUrl = `ws://${window.location.hostname}:5567/ws?device=dashboard`
+          ws = new WebSocket(wsUrl)
+
+          ws.onopen = () => {
+            wsConnected.value = true
+            console.log('[WS] Connected')
+          }
+
+          ws.onclose = () => {
+            wsConnected.value = false
+            console.log('[WS] Disconnected, reconnecting...')
+            setTimeout(connectWebSocket, 3000)
+          }
+
+          ws.onerror = (e) => {
+            console.error('[WS] Error:', e)
+          }
+
+          ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data)
+
+            switch (msg.type) {
+              case 'state':
+                chatState.value = { status: msg.status, request_id: msg.request_id }
+                // Refresh history when state changes (captures step updates)
+                if (autoRefresh.value) fetchHistory()
+                break
+
+              case 'history':
+                // Full chat history on connect
+                chatMessages.value = msg.messages || []
+                scrollChatToBottom()
+                break
+
+              case 'chat':
+                // New chat message
+                chatMessages.value.push({
+                  role: msg.role,
+                  content: msg.content,
+                  timestamp: msg.timestamp
+                })
+                while (chatMessages.value.length > 50) chatMessages.value.shift()
+                scrollChatToBottom()
+                break
+
+              case 'permission':
+                // Permission request - show prompt
+                currentPrompt.value = {
+                  question: msg.question,
+                  context: msg.context,
+                  title: msg.tool_name,
+                  request_id: msg.request_id,
+                  isPermission: true,
+                  options: msg.options
+                }
+                scrollChatToBottom()
+                if (autoRefresh.value) fetchHistory()
+                break
+
+              case 'permission_resolved':
+                // Clear prompt if it matches
+                if (currentPrompt.value && currentPrompt.value.request_id === msg.request_id) {
+                  currentPrompt.value = null
+                }
+                if (autoRefresh.value) fetchHistory()
+                break
+
+              case 'clients':
+                connectedClients.value = msg.clients || []
+                break
+
+              case 'usage':
+                // Could display usage stats in the future
+                break
+
+              case 'text_chunk':
+              case 'tool':
+                // Refresh history to show updated steps
+                if (autoRefresh.value) fetchHistory()
+                break
+            }
+          }
         }
 
         const handleKeydown = (e) => {
@@ -1233,17 +1399,19 @@
           fetchHistory()
           fetchConfig()
           fetchChat()
+          connectWebSocket()
+          // Keep polling history as fallback (less frequently since WS handles most updates)
           intervalId = setInterval(() => {
             if (autoRefresh.value) {
               fetchHistory()
-              fetchChat()
             }
-          }, 2000)
+          }, 5000)
           document.addEventListener('keydown', handleKeydown)
         })
 
         onUnmounted(() => {
           if (intervalId) clearInterval(intervalId)
+          if (ws) ws.close()
           document.removeEventListener('keydown', handleKeydown)
         })
 
@@ -1260,11 +1428,14 @@
           chatState,
           chatContainer,
           currentPrompt,
+          wsConnected,
+          connectedClients,
           respondToPrompt,
           stats,
           fetchHistory,
           fetchChat,
           saveSettings,
+          restartClaude,
           formatTime,
           formatFullTime,
           formatSize,
