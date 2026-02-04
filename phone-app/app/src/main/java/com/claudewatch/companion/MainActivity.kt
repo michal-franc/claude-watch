@@ -65,7 +65,7 @@ class MainActivity : AppCompatActivity() {
     // Pending messages queue (messages waiting to be sent)
     private val pendingMessages = MutableStateFlow<List<ChatMessage>>(emptyList())
 
-    // Voice recording
+    // Voice recording (toggle: tap to start, tap to stop)
     private var mediaRecorder: MediaRecorder? = null
     private var audioFile: File? = null
     private var isRecording = false
@@ -148,24 +148,16 @@ class MainActivity : AppCompatActivity() {
             } else false
         }
 
-        // Voice button - hold to record
-        binding.voiceButton.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    if (checkAudioPermission()) {
-                        startRecording()
-                    } else {
-                        requestAudioPermission()
-                    }
-                    true
+        // Voice button - tap to toggle recording
+        binding.voiceButton.setOnClickListener {
+            if (isRecording) {
+                stopRecordingAndSend()
+            } else {
+                if (checkAudioPermission()) {
+                    startRecording()
+                } else {
+                    requestAudioPermission()
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (isRecording) {
-                        stopRecordingAndSend()
-                    }
-                    true
-                }
-                else -> false
             }
         }
     }
@@ -380,7 +372,7 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "Hold mic button to record", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Tap mic button to record", Toast.LENGTH_SHORT).show()
             } else {
                 Toast.makeText(this, "Microphone permission denied", Toast.LENGTH_SHORT).show()
             }
