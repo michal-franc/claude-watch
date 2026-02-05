@@ -33,6 +33,8 @@ Watch &rarr; Phone (Bluetooth/DataLayer) &rarr; Server (HTTP + WebSocket) &rarr;
 
 The watch has no direct network connection — all traffic relays through the paired phone via the Wearable DataLayer API.
 
+![Phone Relay Architecture](docs/phone-relay-architecture.jpg)
+
 ## Setup
 
 ```bash
