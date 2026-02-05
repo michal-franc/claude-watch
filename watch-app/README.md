@@ -14,16 +14,29 @@ Voice recording app for Galaxy Watch that sends audio to the claude-watch server
 
 ![Watch App Architecture](../docs/watch-architecture.jpg)
 
+### Relay Connection
+
+The watch connects to the server through the phone app:
+
+```
+Watch ←→ Phone (DataLayer) ←→ Server (WebSocket)
+```
+
+- **RelayClient** on watch sends/receives via Wearable DataLayer
+- **PhoneRelayService** on phone forwards messages to server WebSocket
+- Real-time state updates flow back through the same path
+
 ## Features
 
 - One-tap recording start/stop
-- Direct HTTP POST to server
-- Response polling with timeout handling
+- Connects to server through phone relay (Watch → Phone → Server)
+- Real-time state updates via WebSocket
 - Text notification display
 - Audio response playback with controls
 - Haptic feedback (vibration)
 - Wake lock during operations
-- Configurable server settings
+- Permission prompt handling
+- Configurable server settings (via phone app)
 
 ## States
 
@@ -120,20 +133,24 @@ Compatible with Deepgram API.
 
 - Galaxy Watch 4 or newer (Wear OS 3+)
 - Android SDK 30+ (minSdk)
-- Watch must be on same network as server
+- Claude Companion phone app installed and connected
+- Phone must be on same network as server
 
 ## Project Structure
 
 ```
 watch-app/
 ├── app/src/main/java/com/claudewatch/app/
-│   ├── MainActivity.kt      # Recording, polling, playback
-│   └── SettingsActivity.kt  # Server configuration
+│   ├── MainActivity.kt           # Recording UI + state display
+│   ├── SettingsActivity.kt       # Server configuration
+│   └── relay/
+│       ├── RelayClient.kt        # DataLayer communication
+│       └── WatchWebSocketClient.kt # State management
 ├── app/src/main/res/
 │   └── layout/
 │       ├── activity_main.xml
 │       └── activity_settings.xml
-├── app/src/test/             # Unit tests
+├── app/src/test/                  # Unit tests
 └── build.gradle.kts
 ```
 

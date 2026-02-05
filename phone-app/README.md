@@ -37,7 +37,26 @@ Tamagotchi-style blob that reacts to Claude's state.
 ### Input Methods
 
 - **Text Input** - Type messages with keyboard
-- **Voice Input** - Hold mic button to record, release to send
+- **Voice Input** - Tap mic button to record, tap again to send
+
+### Wake Word Detection
+
+Hands-free voice activation with "Hey Toadie":
+- Enable in Settings → Wake Word toggle
+- Works with screen off or locked
+- Shows fullscreen overlay with animated creature
+- Audio wave visualization shows voice amplitude
+- Auto-sends when silence detected
+
+| State | Visual |
+|-------|--------|
+| Listening | Creature in LISTENING mode + sine wave animation |
+| Sending | Creature in THINKING mode |
+| Done | Transitions to main chat |
+
+**Required Permissions:**
+- Microphone (foreground service)
+- Display over other apps (background activity launch)
 
 ### Permission Prompts
 
@@ -125,8 +144,16 @@ phone-app/
 │   │   └── ChatAdapter.kt        # RecyclerView adapter
 │   ├── network/
 │   │   └── WebSocketClient.kt    # OkHttp WebSocket + StateFlow
+│   ├── wakeword/
+│   │   ├── WakeWordService.kt    # Porcupine wake word detection
+│   │   ├── WakeWordActivity.kt   # Fullscreen overlay
+│   │   └── AudioWaveView.kt      # Sine wave visualization
+│   ├── relay/
+│   │   └── PhoneRelayService.kt  # Watch-to-server relay
 │   └── kiosk/
 │       └── KioskManager.kt       # Fullscreen mode
+├── app/src/main/assets/
+│   └── hey-toadie_en_android_v4_0_0.ppn  # Porcupine wake word model
 ├── app/src/main/res/
 │   ├── layout/
 │   │   ├── activity_main.xml     # 40% creature / 60% chat split
@@ -159,6 +186,7 @@ Tests cover:
 - Kotlin Coroutines - Async operations
 - AndroidX RecyclerView - Chat list
 - Material Components - UI elements
+- Porcupine Android - Wake word detection
 
 ## Color Palette
 
