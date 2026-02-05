@@ -1,201 +1,66 @@
-# Claude Companion
+# Toadie — Android Companion App
 
-Android phone app with a Tamagotchi-style Claude creature, real-time chat, and permission prompt handling. Connects to the Claude Watch server via WebSocket for live updates.
+Android phone app with an animated creature (Toadie), real-time chat, wake word detection, and permission prompt handling. Connects to the server via WebSocket for live updates, and relays traffic to the watch via Wearable DataLayer.
 
-![Mockup](../docs/phone-mockups/companion-app.svg)
-
-## Architecture
-
-![Phone App Architecture](../docs/phone-architecture.jpg)
+<p align="center">
+  <img src="../docs/phone-mockups/screenshots/creature-idle.png" width="250" alt="Idle">
+  &nbsp;
+  <img src="../docs/phone-mockups/screenshots/creature-thinking.png" width="250" alt="Thinking">
+  &nbsp;
+  <img src="../docs/phone-mockups/screenshots/wake-word-listening.png" width="250" alt="Wake Word">
+</p>
 
 ## Features
 
-### Animated Creature
+- **Animated Creature** — Green troll (Toadie) with state-driven animations: breathing, blinking, thought bubbles, bouncing, particles, and glow effects
+- **Real-time Chat** — Messages via WebSocket, blue user bubbles, orange Claude bubbles, auto-scroll
+- **Voice & Text Input** — Tap mic to record, tap again to send; or type messages
+- **Wake Word** — Say "hey toadie" hands-free (Picovoice Porcupine), works with screen off, fullscreen overlay with audio wave visualization
+- **Permission Prompts** — Approve/deny dangerous tool calls (Bash, file writes) directly from the phone
+- **Watch Relay** — Forwards all traffic between watch and server via Wearable DataLayer (Bluetooth)
+- **Kiosk Mode** — Fullscreen immersive display, triple-tap top-left to exit
 
-Tamagotchi-style blob that reacts to Claude's state.
+## Creature States
 
-![Creature States](../docs/phone-mockups/creature-states.svg)
+<p align="center">
+  <img src="../docs/phone-mockups/screenshots/creature-idle.png" width="200" alt="Idle">
+  &nbsp;
+  <img src="../docs/phone-mockups/screenshots/creature-thinking.png" width="200" alt="Thinking">
+  &nbsp;
+  <img src="../docs/phone-mockups/screenshots/creature-speaking.png" width="200" alt="Speaking">
+</p>
 
-| State | Trigger | Animation |
-|-------|---------|-----------|
-| Idle | Default | Gentle breathing, occasional blinks |
-| Listening | Audio received | Ears perked, attentive eyes |
-| Thinking | Processing | Eyes closed, thought bubbles |
-| Speaking | Response ready | Happy bounce, talking mouth |
-| Sleeping | 2+ min idle | Zzz particles, closed eyes |
-| Offline | Disconnected | Sad expression, gray color |
-
-### Real-time Chat
-
-- Messages appear instantly via WebSocket
-- User messages: Blue bubbles (right-aligned)
-- Claude messages: Orange bubbles (left-aligned)
-- Auto-scroll to newest message
-- Pending/failed message status indicators
-- Retry failed messages on tap
-
-### Input Methods
-
-- **Text Input** - Type messages with keyboard
-- **Voice Input** - Tap mic button to record, tap again to send
-
-### Wake Word Detection
-
-Hands-free voice activation with "Hey Toadie":
-- Enable in Settings → Wake Word toggle
-- Works with screen off or locked
-- Shows fullscreen overlay with animated creature
-- Audio wave visualization shows voice amplitude
-- Auto-sends when silence detected
-
-| State | Visual |
-|-------|--------|
-| Listening | Creature in LISTENING mode + sine wave animation |
-| Sending | Creature in THINKING mode |
-| Done | Transitions to main chat |
-
-**Required Permissions:**
-- Microphone (foreground service)
-- Display over other apps (background activity launch)
-
-### Permission Prompts
-
-When Claude needs approval for sensitive operations:
-- Displays tool name and context
-- Shows Allow/Deny options
-- Sends decision to server
-- Clears on resolution
-
-### Kiosk Mode
-
-Fullscreen immersive display mode:
-- Hides status bar and navigation
-- Triple-tap top-left corner to exit
-
-## Requirements
-
-- Android 8.0 (API 26) or higher
-- Network access to Claude Watch server
+| State | Trigger | Visual |
+|-------|---------|--------|
+| Idle | Default | Breathing, occasional blinks, green glow |
+| Listening | Audio received | Perked horns, dilated pupils, pulse rings |
+| Thinking | Processing | Closed eyes, thought bubbles, blue glow |
+| Speaking | Response ready | Bouncing, open mouth, gold sparkles |
+| Sleeping | 2+ min idle | Droopy horns, Zzz particles, purple glow |
+| Offline | Disconnected | Gray body, sad frown |
 
 ## Setup
 
-1. Build the app:
-   ```bash
-   cd phone-app
-   ./gradlew assembleDebug
-   ```
-
-2. Install on phone:
-   ```bash
-   adb install -r app/build/outputs/apk/debug/app-debug.apk
-   ```
-
-3. Configure server address in Settings:
-   - Tap the gear icon
-   - Enter server IP and WebSocket port (e.g., `192.168.1.100:5567`)
-   - Toggle Kiosk mode if desired
-   - Tap Save
-
-## Server Connection
-
-The app connects via WebSocket for real-time updates:
-
 ```bash
-# Server must be running
-./server.py /path/to/project
+./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-### Endpoints Used
+Configure server address in Settings (gear icon) — enter IP and WebSocket port (e.g. `192.168.1.100:5567`).
 
-| Endpoint | Port | Description |
-|----------|------|-------------|
-| `ws://server:5567/ws` | 5567 | WebSocket for state & chat |
-| `POST /api/message` | 5566 | Send text messages |
-| `POST /transcribe` | 5566 | Send audio recordings |
-| `POST /api/permission/respond` | 5566 | Submit permission decision |
-
-### WebSocket Messages
-
-**Received:**
-| Type | Description |
-|------|-------------|
-| `state` | Claude status updates |
-| `chat` | New chat message |
-| `history` | Full chat history on connect |
-| `permission` | Permission request |
-| `permission_resolved` | Permission decision made |
-| `usage` | Context usage stats |
-
-**Connection:**
-- Auto-reconnect on disconnect (5s delay)
-- Ping/pong keepalive (30s interval)
-
-## Project Structure
-
+For wake word, add your [Picovoice](https://picovoice.ai/) access key to `local.properties`:
 ```
-phone-app/
-├── app/src/main/java/com/claudewatch/companion/
-│   ├── MainActivity.kt           # Main UI + input handling
-│   ├── SettingsActivity.kt       # Server config, kiosk toggle
-│   ├── creature/
-│   │   ├── CreatureView.kt       # Custom Canvas creature
-│   │   └── CreatureState.kt      # State enum
-│   ├── chat/
-│   │   └── ChatAdapter.kt        # RecyclerView adapter
-│   ├── network/
-│   │   └── WebSocketClient.kt    # OkHttp WebSocket + StateFlow
-│   ├── wakeword/
-│   │   ├── WakeWordService.kt    # Porcupine wake word detection
-│   │   ├── WakeWordActivity.kt   # Fullscreen overlay
-│   │   └── AudioWaveView.kt      # Sine wave visualization
-│   ├── relay/
-│   │   └── PhoneRelayService.kt  # Watch-to-server relay
-│   └── kiosk/
-│       └── KioskManager.kt       # Fullscreen mode
-├── app/src/main/assets/
-│   └── hey-toadie_en_android_v4_0_0.ppn  # Porcupine wake word model
-├── app/src/main/res/
-│   ├── layout/
-│   │   ├── activity_main.xml     # 40% creature / 60% chat split
-│   │   ├── activity_settings.xml
-│   │   ├── item_chat_user.xml    # Blue bubble
-│   │   └── item_chat_claude.xml  # Orange bubble
-│   └── values/
-│       ├── colors.xml            # App color palette
-│       └── themes.xml            # Dark theme
-├── app/src/test/                  # Unit tests
-└── build.gradle.kts
+porcupine.access_key=your-key-here
 ```
 
 ## Testing
 
 ```bash
-# Run unit tests
 ./gradlew test
 ```
 
-Tests cover:
-- WebSocket message parsing
-- ChatAdapter DiffUtil callback
-- KioskManager tap detection
-- CreatureState mapping
+## Requirements
 
-## Dependencies
-
-- OkHttp 4.12.0 - WebSocket & HTTP
-- Kotlin Coroutines - Async operations
-- AndroidX RecyclerView - Chat list
-- Material Components - UI elements
-- Porcupine Android - Wake word detection
-
-## Color Palette
-
-| Element | Color |
-|---------|-------|
-| Background | `#1a1a2e` |
-| Creature (light) | `#FBBF24` |
-| Creature (dark) | `#D97706` |
-| User bubble | `#0099FF` |
-| Claude bubble | `#F59E0B` |
-| Connected | `#4CAF50` |
-| Disconnected | `#F44336` |
+- Android 8.0+ (API 26)
+- Network access to server (or Tailscale)
+- Picovoice access key (for wake word)
