@@ -14,7 +14,12 @@ Voice-to-Claude pipeline: Speak into your Galaxy Watch or phone (or just say "he
 - **Python Server** — HTTP + WebSocket server bridging apps to Claude Code, with permission hook for dangerous operations
 - **Speech-to-Text & TTS** — Powered by [Deepgram](https://deepgram.com/) for fast transcription and natural voice responses
 - **Permission System** — Dangerous tool calls (Bash, file writes) require approval from your watch or phone before Claude can proceed
+- **Web Dashboard** — Vue.js control panel for monitoring Claude state, chat history, transcription settings, and permission prompts
 - **Remote Access** — Works over [Tailscale](https://tailscale.com/) so you can talk to Claude from anywhere, not just your local network
+
+<p align="center">
+  <img src="web_ui.jpg" width="600" alt="Web Dashboard">
+</p>
 
 ## Architecture
 
