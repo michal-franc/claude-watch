@@ -8,4 +8,9 @@
         <item name="android:statusBarColor">@color/background_dark</item>
         <item name="android:navigationBarColor">@color/background_dark</item>
     </style>
+
+    <style name="Theme.ClaudeCompanion.Fullscreen" parent="Theme.ClaudeCompanion">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
 </resources>

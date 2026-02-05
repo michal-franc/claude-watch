@@ -1,6 +1,13 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) load(file.inputStream())
 }
 
 android {
@@ -13,6 +20,12 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+
+        buildConfigField(
+            "String",
+            "PORCUPINE_ACCESS_KEY",
+            "\"${localProperties.getProperty("porcupine.access_key", "")}\""
+        )
     }
 
     buildTypes {
@@ -36,6 +49,7 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 }
 
@@ -67,6 +81,9 @@ dependencies {
 
     // Preferences
     implementation("androidx.preference:preference-ktx:1.2.1")
+
+    // Picovoice Porcupine for wake word detection
+    implementation("ai.picovoice:porcupine-android:4.0.0")
 
     // Testing
     testImplementation("junit:junit:4.13.2")

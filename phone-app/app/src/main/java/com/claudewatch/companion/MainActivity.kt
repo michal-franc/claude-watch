@@ -3,6 +3,7 @@ package com.claudewatch.companion
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.graphics.drawable.ClipDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
@@ -31,6 +32,7 @@ import com.claudewatch.companion.network.WebSocketClient
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.graphics.Typeface
+import com.claudewatch.companion.wakeword.WakeWordService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -54,6 +56,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val PERMISSION_REQUEST_CODE = 1001
+        private const val NOTIFICATION_PERMISSION_CODE = 1002
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -91,6 +94,23 @@ class MainActivity : AppCompatActivity() {
         // Enter kiosk mode if enabled in settings
         if (SettingsActivity.isKioskModeEnabled(this)) {
             enterKioskMode()
+        }
+
+        // Request notification permission on API 33+ (needed for foreground service)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                    NOTIFICATION_PERMISSION_CODE
+                )
+            }
+        }
+
+        // Auto-start wake word service if enabled
+        if (SettingsActivity.isWakeWordEnabled(this)) {
+            WakeWordService.start(this)
         }
     }
 

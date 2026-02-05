@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.claudewatch.companion.databinding.ActivitySettingsBinding
+import com.claudewatch.companion.wakeword.WakeWordService
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -14,6 +15,7 @@ class SettingsActivity : AppCompatActivity() {
         private const val KEY_SERVER_ADDRESS = "server_address"
         private const val KEY_KIOSK_MODE = "kiosk_mode"
         private const val KEY_AUTO_RETRY = "auto_retry"
+        private const val KEY_WAKE_WORD = "wake_word"
         private const val DEFAULT_SERVER = "192.168.1.100:5567"
 
         fun getServerAddress(context: Context): String {
@@ -29,6 +31,11 @@ class SettingsActivity : AppCompatActivity() {
         fun isAutoRetryEnabled(context: Context): Boolean {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             return prefs.getBoolean(KEY_AUTO_RETRY, false)
+        }
+
+        fun isWakeWordEnabled(context: Context): Boolean {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            return prefs.getBoolean(KEY_WAKE_WORD, false)
         }
     }
 
@@ -49,6 +56,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.serverAddressInput.setText(getServerAddress(this))
         binding.kioskModeSwitch.isChecked = isKioskModeEnabled(this)
         binding.autoRetrySwitch.isChecked = isAutoRetryEnabled(this)
+        binding.wakeWordSwitch.isChecked = isWakeWordEnabled(this)
 
         // Save button
         binding.saveButton.setOnClickListener {
@@ -60,6 +68,7 @@ class SettingsActivity : AppCompatActivity() {
         val serverAddress = binding.serverAddressInput.text.toString().trim()
         val kioskMode = binding.kioskModeSwitch.isChecked
         val autoRetry = binding.autoRetrySwitch.isChecked
+        val wakeWord = binding.wakeWordSwitch.isChecked
 
         if (serverAddress.isEmpty()) {
             binding.serverAddressInput.error = "Server address is required"
@@ -70,7 +79,14 @@ class SettingsActivity : AppCompatActivity() {
             .putString(KEY_SERVER_ADDRESS, serverAddress)
             .putBoolean(KEY_KIOSK_MODE, kioskMode)
             .putBoolean(KEY_AUTO_RETRY, autoRetry)
+            .putBoolean(KEY_WAKE_WORD, wakeWord)
             .apply()
+
+        if (wakeWord) {
+            WakeWordService.start(this)
+        } else {
+            WakeWordService.stop(this)
+        }
 
         Toast.makeText(this, "Settings saved", Toast.LENGTH_SHORT).show()
         finish()
