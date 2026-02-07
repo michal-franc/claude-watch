@@ -20,6 +20,7 @@ object RelayWebSocketManager {
 
     private const val TAG = "RelayWSManager"
     private const val RECONNECT_DELAY_MS = 5000L
+    private const val HEARTBEAT_INTERVAL_MS = 30_000L
     const val PATH_WS_MESSAGE = "/relay/ws/message"
     const val PATH_WS_STATUS = "/relay/ws/status"
 
@@ -31,6 +32,7 @@ object RelayWebSocketManager {
     private var context: Context? = null
     private var webSocket: WebSocket? = null
     private var reconnectJob: Job? = null
+    private var heartbeatJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var watchNodeId: String? = null
     var isConnected = false
@@ -42,6 +44,7 @@ object RelayWebSocketManager {
             Log.i(TAG, "Watch-relay WebSocket connected")
             isConnected = true
             sendStatusToWatch("connected")
+            startHeartbeat()
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
@@ -59,6 +62,7 @@ object RelayWebSocketManager {
             if (webSocket !== this@RelayWebSocketManager.webSocket) return
             Log.i(TAG, "Relay WS closed: $code $reason")
             isConnected = false
+            heartbeatJob?.cancel()
             sendStatusToWatch("disconnected")
             scheduleReconnect()
         }
@@ -67,6 +71,7 @@ object RelayWebSocketManager {
             if (webSocket !== this@RelayWebSocketManager.webSocket) return
             Log.e(TAG, "Relay WS error", t)
             isConnected = false
+            heartbeatJob?.cancel()
             sendStatusToWatch("disconnected")
             scheduleReconnect()
         }
@@ -94,6 +99,7 @@ object RelayWebSocketManager {
 
     fun disconnect() {
         reconnectJob?.cancel()
+        heartbeatJob?.cancel()
         webSocket?.close(1000, "Watch disconnect")
         webSocket = null
         isConnected = false
@@ -106,6 +112,16 @@ object RelayWebSocketManager {
             val ctx = context ?: return@launch
             val nodeId = watchNodeId ?: return@launch
             connect(ctx, nodeId)
+        }
+    }
+
+    private fun startHeartbeat() {
+        heartbeatJob?.cancel()
+        heartbeatJob = scope.launch {
+            while (isActive && isConnected) {
+                delay(HEARTBEAT_INTERVAL_MS)
+                sendStatusToWatch("heartbeat")
+            }
         }
     }
 

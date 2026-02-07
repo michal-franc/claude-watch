@@ -17,10 +17,14 @@ class WatchWebSocketClient {
         private const val TAG = "WatchWebSocket"
         private const val RECONNECT_DELAY_MS = 5000L
         private const val DISCONNECT_GRACE_MS = 2000L
+        private const val HEARTBEAT_TIMEOUT_MS = 45_000L
+        private const val HEARTBEAT_CHECK_INTERVAL_MS = 15_000L
     }
 
     private var reconnectJob: Job? = null
     private var disconnectGraceJob: Job? = null
+    private var heartbeatCheckJob: Job? = null
+    @Volatile private var lastRelayActivityMs = 0L
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     // State flows for UI observation
@@ -43,14 +47,21 @@ class WatchWebSocketClient {
         // Register for relay callbacks
         RelayClient.onWebSocketMessage = { text ->
             Log.d(TAG, "Received via relay: $text")
+            lastRelayActivityMs = System.currentTimeMillis()
             handleMessage(text)
         }
         RelayClient.onWebSocketStatus = { status ->
-            Log.i(TAG, "WS status via relay: $status")
+            lastRelayActivityMs = System.currentTimeMillis()
+            if (status != "heartbeat") {
+                Log.i(TAG, "WS status via relay: $status")
+            }
             when (status) {
-                "connected" -> {
+                "connected", "heartbeat" -> {
                     disconnectGraceJob?.cancel()
-                    _connectionStatus.value = ConnectionStatus.CONNECTED
+                    if (_connectionStatus.value != ConnectionStatus.CONNECTED) {
+                        _connectionStatus.value = ConnectionStatus.CONNECTED
+                    }
+                    startHeartbeatCheck()
                 }
                 "connecting" -> {
                     if (_connectionStatus.value != ConnectionStatus.CONNECTED) {
@@ -95,6 +106,7 @@ class WatchWebSocketClient {
     fun disconnect() {
         reconnectJob?.cancel()
         disconnectGraceJob?.cancel()
+        heartbeatCheckJob?.cancel()
         scope.launch {
             try {
                 RelayClient.wsDisconnect()
@@ -106,11 +118,30 @@ class WatchWebSocketClient {
     }
 
     fun destroy() {
+        heartbeatCheckJob?.cancel()
         disconnectGraceJob?.cancel()
         disconnect()
         RelayClient.onWebSocketMessage = null
         RelayClient.onWebSocketStatus = null
         scope.cancel()
+    }
+
+    private fun startHeartbeatCheck() {
+        if (heartbeatCheckJob?.isActive == true) return
+        heartbeatCheckJob = scope.launch {
+            while (isActive) {
+                delay(HEARTBEAT_CHECK_INTERVAL_MS)
+                if (_connectionStatus.value == ConnectionStatus.CONNECTED &&
+                    System.currentTimeMillis() - lastRelayActivityMs > HEARTBEAT_TIMEOUT_MS
+                ) {
+                    Log.w(TAG, "Heartbeat timeout — relay appears dead, reconnecting")
+                    _connectionStatus.value = ConnectionStatus.DISCONNECTED
+                    heartbeatCheckJob?.cancel()
+                    connect()
+                    break
+                }
+            }
+        }
     }
 
     private fun scheduleReconnect() {
