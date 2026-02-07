@@ -839,7 +839,8 @@ class MainActivity : Activity() {
         super.onNewIntent(intent)
         if (intent?.getBooleanExtra("from_permission", false) == true) return
         if (intent?.getBooleanExtra("auto_record", false) == true) {
-            if (checkPermission() && !isRecording) startRecording()
+            if (isRecording) stopRecordingAndSend()
+            else if (checkPermission()) startRecording()
             return
         }
         val claudeStatus = wsClient.claudeState.value.status
