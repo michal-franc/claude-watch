@@ -21,14 +21,23 @@ Voice-to-Claude pipeline: Galaxy Watch/Phone -> Server -> Deepgram -> Claude Cod
 
 ## Commands
 
-```bash
-# Run all tests
-pytest
+**Before committing, always run `make check` to lint and test everything (mirrors CI).**
 
-# Run specific tests
-pytest test_server.py
-pytest test_claude_wrapper.py
-pytest test_permission_hook.py
+```bash
+# Run all lints + tests (same as CI)
+make check
+
+# Just lints or just tests
+make lint
+make test
+
+# Individual targets
+make lint-python     # ruff check + format
+make test-python     # pytest
+make lint-watch      # ./gradlew lint (watch-app)
+make test-watch      # ./gradlew test (watch-app)
+make lint-phone      # ./gradlew lint (phone-app)
+make test-phone      # ./gradlew test (phone-app)
 
 # Start server (folder arg required)
 ./server.py /path/to/project
@@ -40,10 +49,6 @@ cd phone-app && ./gradlew assembleDebug
 # Install apps
 adb install -r watch-app/app/build/outputs/apk/debug/app-debug.apk
 adb install -r phone-app/app/build/outputs/apk/debug/app-debug.apk
-
-# Run app tests
-cd watch-app && ./gradlew test
-cd phone-app && ./gradlew test
 ```
 
 ## App Install Gotcha
