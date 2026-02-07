@@ -68,6 +68,12 @@ pytest                             # All tests
 curl http://localhost:5566/health  # Health check
 ```
 
+## Features
+
+- [Tailscale Peer Verification](docs/features/tailscale-auth.md) — Access control using Tailscale node identity
+- [Security: Defense in Depth](docs/features/security.md) — Multiple overlapping security layers
+- [Hardware Button Quick Record](docs/features/hardware-button-record.md) — Double-press a hardware button to start recording on the watch
+
 ## Troubleshooting
 
 - **400 Bad Request** — Use `http://` not `https://`
