@@ -137,6 +137,7 @@ class WebSocketClient(
             .url(wsUrl)
             .build()
 
+        webSocket?.close(1000, "Reconnecting")
         webSocket = client.newWebSocket(request, listener)
     }
 

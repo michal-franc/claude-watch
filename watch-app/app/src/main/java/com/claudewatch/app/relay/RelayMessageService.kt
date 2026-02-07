@@ -1,9 +1,14 @@
 package com.claudewatch.app.relay
 
+import android.content.Context
+import android.content.Intent
+import android.os.PowerManager
 import android.util.Log
+import com.claudewatch.app.MainActivity
 import com.google.android.gms.wearable.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.tasks.await
+import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 
 /**
@@ -27,6 +32,7 @@ class RelayMessageService : WearableListenerService() {
             }
             RelayClient.PATH_WS_MESSAGE -> {
                 RelayClient.onWsMessage(messageEvent.data)
+                tryLaunchForPermission(messageEvent.data)
             }
             RelayClient.PATH_WS_STATUS -> {
                 RelayClient.onWsStatus(messageEvent.data)
@@ -37,6 +43,31 @@ class RelayMessageService : WearableListenerService() {
             else -> {
                 Log.w(TAG, "Unknown message path: ${messageEvent.path}")
             }
+        }
+    }
+
+    private fun tryLaunchForPermission(data: ByteArray) {
+        try {
+            val json = JSONObject(String(data, Charsets.UTF_8))
+            if (json.optString("type") != "permission") return
+
+            Log.i(TAG, "Permission request received — waking screen and launching app")
+
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            @Suppress("DEPRECATION")
+            val wakeLock = pm.newWakeLock(
+                PowerManager.FULL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "claudewatch:permission"
+            )
+            wakeLock.acquire(5_000L)
+
+            val intent = Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                putExtra("from_permission", true)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error launching for permission", e)
         }
     }
 

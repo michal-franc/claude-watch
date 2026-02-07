@@ -828,6 +828,7 @@ class MainActivity : Activity() {
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
+        if (intent?.getBooleanExtra("from_permission", false) == true) return
         val claudeStatus = wsClient.claudeState.value.status
         val isConnected = wsClient.connectionStatus.value == ConnectionStatus.CONNECTED
         when {
