@@ -35,11 +35,33 @@ import com.claudewatch.app.relay.RelayClient
 
 class MainActivity : Activity() {
 
+    enum class IntentAction {
+        IGNORE, START_RECORDING, STOP_AND_SEND, PAUSE_AUDIO, ABORT, NONE
+    }
+
     companion object {
         private const val TAG = "ClaudeWatch"
         private const val PERMISSION_REQUEST_CODE = 1001
         private const val FADE_MS = 200L
         private const val SCALE_MS = 250L
+
+        fun resolveIntentAction(
+            fromPermission: Boolean,
+            autoRecord: Boolean,
+            hasPermission: Boolean,
+            isRecording: Boolean,
+            isPlayingAudio: Boolean,
+            claudeStatus: String
+        ): IntentAction = when {
+            fromPermission -> IntentAction.IGNORE
+            autoRecord && isRecording -> IntentAction.STOP_AND_SEND
+            autoRecord && hasPermission -> IntentAction.START_RECORDING
+            autoRecord -> IntentAction.NONE
+            isPlayingAudio -> IntentAction.PAUSE_AUDIO
+            claudeStatus == "thinking" -> IntentAction.ABORT
+            isRecording -> IntentAction.STOP_AND_SEND
+            else -> IntentAction.NONE
+        }
     }
 
     // UI elements
@@ -837,17 +859,21 @@ class MainActivity : Activity() {
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        if (intent?.getBooleanExtra("from_permission", false) == true) return
-        if (intent?.getBooleanExtra("auto_record", false) == true) {
-            if (isRecording) stopRecordingAndSend()
-            else if (checkPermission()) startRecording()
-            return
-        }
-        val claudeStatus = wsClient.claudeState.value.status
-        when {
-            isPlayingAudio -> onPauseClick()
-            claudeStatus == "thinking" -> onAbortClick()
-            isRecording -> stopRecordingAndSend()
+        val action = resolveIntentAction(
+            fromPermission = intent?.getBooleanExtra("from_permission", false) == true,
+            autoRecord = intent?.getBooleanExtra("auto_record", false) == true,
+            hasPermission = checkPermission(),
+            isRecording = isRecording,
+            isPlayingAudio = isPlayingAudio,
+            claudeStatus = wsClient.claudeState.value.status
+        )
+        when (action) {
+            IntentAction.IGNORE -> {}
+            IntentAction.START_RECORDING -> startRecording()
+            IntentAction.STOP_AND_SEND -> stopRecordingAndSend()
+            IntentAction.PAUSE_AUDIO -> onPauseClick()
+            IntentAction.ABORT -> onAbortClick()
+            IntentAction.NONE -> {}
         }
     }
 
