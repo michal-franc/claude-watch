@@ -1,5 +1,6 @@
 """Unit tests for claude_wrapper.py (ClaudeTmuxSession + JsonlWatcher)"""
 
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -193,7 +194,9 @@ class TestClaudeTmuxSessionRun:
     @patch("claude_wrapper.get_jsonl_line_count", return_value=5)
     @patch.object(ClaudeTmuxSession, "is_alive", return_value=True)
     @patch.object(ClaudeTmuxSession, "_start_session")
-    def test_run_raises_when_no_session_id(self, mock_start, mock_alive, mock_count, mock_latest, mock_send, mock_usage):
+    def test_run_raises_when_no_session_id(
+        self, mock_start, mock_alive, mock_count, mock_latest, mock_send, mock_usage
+    ):
         session = ClaudeTmuxSession("/tmp")
         session.session_id = None
 
@@ -416,3 +419,132 @@ class TestJsonlWatcher:
 
         assert result is False
         text_cb.assert_not_called()
+
+    @patch("claude_wrapper.read_new_entries")
+    def test_poll_fires_on_user_message_string(self, mock_read):
+        mock_read.return_value = [
+            {"type": "user", "message": {"content": "hello from tmux"}},
+        ]
+
+        watcher = JsonlWatcher("/tmp", "sess", 0)
+        user_cb = MagicMock()
+        result = watcher.poll(on_user_message=user_cb)
+
+        assert result is True
+        user_cb.assert_called_once_with("hello from tmux")
+
+    @patch("claude_wrapper.read_new_entries")
+    def test_poll_fires_on_user_message_text_item(self, mock_read):
+        mock_read.return_value = [
+            {"type": "user", "message": {"content": [{"type": "text", "text": "typed prompt"}]}},
+        ]
+
+        watcher = JsonlWatcher("/tmp", "sess", 0)
+        user_cb = MagicMock()
+        result = watcher.poll(on_user_message=user_cb)
+
+        assert result is True
+        user_cb.assert_called_once_with("typed prompt")
+
+    @patch("claude_wrapper.read_new_entries")
+    def test_poll_does_not_fire_user_message_for_tool_results(self, mock_read):
+        mock_read.return_value = [
+            {"type": "user", "message": {"content": [{"type": "tool_result", "content": "ok"}]}},
+        ]
+
+        watcher = JsonlWatcher("/tmp", "sess", 0)
+        user_cb = MagicMock()
+        watcher.poll(on_user_message=user_cb)
+
+        user_cb.assert_not_called()
+
+
+class TestClaudeTmuxSessionRegisterCallbacks:
+    """Tests for register_callbacks"""
+
+    def test_register_stores_all_callbacks(self):
+        session = ClaudeTmuxSession("/tmp")
+        on_text = MagicMock()
+        on_tool = MagicMock()
+        on_user = MagicMock()
+        on_usage = MagicMock()
+        on_turn = MagicMock()
+
+        session.register_callbacks(
+            on_text=on_text,
+            on_tool=on_tool,
+            on_user_message=on_user,
+            on_usage=on_usage,
+            on_turn_complete=on_turn,
+        )
+
+        assert session._callbacks["on_text"] is on_text
+        assert session._callbacks["on_tool"] is on_tool
+        assert session._callbacks["on_user_message"] is on_user
+        assert session._callbacks["on_usage"] is on_usage
+        assert session._callbacks["on_turn_complete"] is on_turn
+
+    def test_register_allows_partial(self):
+        session = ClaudeTmuxSession("/tmp")
+        on_text = MagicMock()
+
+        session.register_callbacks(on_text=on_text)
+
+        assert session._callbacks["on_text"] is on_text
+        assert session._callbacks["on_tool"] is None
+
+
+class TestClaudeTmuxSessionBackgroundWatcher:
+    """Tests for start_background_watcher"""
+
+    def test_starts_daemon_thread(self):
+        session = ClaudeTmuxSession("/tmp")
+
+        with patch.object(session, "_background_watcher_loop"):
+            session.start_background_watcher()
+
+        assert session._watcher_running is True
+        assert session._watcher_thread is not None
+        assert session._watcher_thread.daemon is True
+
+        session._watcher_running = False
+
+    def test_noop_when_already_running(self):
+        session = ClaudeTmuxSession("/tmp")
+
+        keep_alive = threading.Event()
+
+        def fake_loop():
+            keep_alive.wait(timeout=5)
+
+        with patch.object(session, "_background_watcher_loop", side_effect=fake_loop):
+            session.start_background_watcher()
+            first_thread = session._watcher_thread
+            session.start_background_watcher()
+            assert session._watcher_thread is first_thread
+
+        session._watcher_running = False
+        keep_alive.set()
+
+
+class TestClaudeTmuxSessionInitState:
+    """Tests for new init state"""
+
+    def test_init_watcher_state(self):
+        session = ClaudeTmuxSession("/tmp")
+        assert session._callbacks == {}
+        assert session._watcher_thread is None
+        assert session._watcher_running is False
+        assert session._pending_text == []
+        assert not session._turn_complete.is_set()
+        assert session._server_prompt_active is False
+
+    def test_shutdown_stops_watcher(self):
+        session = ClaudeTmuxSession("/tmp")
+        session._watcher_running = True
+
+        with patch("claude_wrapper.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 1  # session doesn't exist
+            session.shutdown()
+
+        assert session._watcher_running is False

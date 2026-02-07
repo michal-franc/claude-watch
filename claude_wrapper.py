@@ -6,6 +6,12 @@ and read structured output from the JSONL session files that Claude Code writes
 to disk.
 
 Prompts are sent via tmux load-buffer + paste-buffer to avoid escaping issues.
+
+Architecture:
+- Background watcher thread continuously polls the JSONL file and fires callbacks
+- run() sends prompts via tmux, then waits for the watcher to signal turn completion
+- Global callbacks (registered once) broadcast to all WebSocket clients
+- Per-request callbacks (passed to run()) handle request-specific logic
 """
 
 import subprocess
@@ -40,6 +46,9 @@ IDLE_TIMEOUT = 3.0
 # Maximum time to wait for a turn to complete (seconds)
 TURN_TIMEOUT = 300
 
+# How often to refresh the session ID in the background watcher (seconds)
+SESSION_REFRESH_INTERVAL = 5.0
+
 
 class JsonlWatcher:
     """Watch a JSONL file for new entries and fire callbacks."""
@@ -56,6 +65,7 @@ class JsonlWatcher:
         self,
         on_text: Optional[Callable[[str], None]] = None,
         on_tool: Optional[Callable[[str, dict], None]] = None,
+        on_user_message: Optional[Callable[[str], None]] = None,
     ) -> bool:
         """Poll for new entries and fire callbacks.
 
@@ -98,12 +108,22 @@ class JsonlWatcher:
                         had_activity = True
 
             elif entry_type == "user":
-                # Tool results - just log for debugging
                 content = entry.get("message", {}).get("content", [])
-                if isinstance(content, list):
+                # Check if this is a user prompt (string content or text item)
+                if isinstance(content, str) and content.strip():
+                    if on_user_message:
+                        on_user_message(content)
+                    had_activity = True
+                elif isinstance(content, list):
                     for item in content:
-                        if isinstance(item, dict) and item.get("type") == "tool_result":
-                            logger.debug("[WATCHER] Tool result received")
+                        if isinstance(item, dict):
+                            if item.get("type") == "text":
+                                text = item.get("text", "")
+                                if text and on_user_message:
+                                    on_user_message(text)
+                                    had_activity = True
+                            elif item.get("type") == "tool_result":
+                                logger.debug("[WATCHER] Tool result received")
 
         return had_activity
 
@@ -129,6 +149,19 @@ class ClaudeTmuxSession:
         self.total_cost_usd: float = 0.0
         self.context_window: int = 200000
 
+        # Background watcher state
+        self._callbacks: dict = {}
+        self._watcher_thread: Optional[threading.Thread] = None
+        self._watcher_running = False
+
+        # Per-turn state (managed by background watcher, consumed by run())
+        self._pending_text: list[str] = []
+        self._turn_complete = threading.Event()
+
+        # Flag: True when run() is active (server-initiated prompt)
+        # Used to suppress on_user_message for server prompts (already added by caller)
+        self._server_prompt_active = False
+
     @classmethod
     def get_instance(cls, workdir: str, model: str = None) -> "ClaudeTmuxSession":
         """Get or create the singleton instance."""
@@ -144,6 +177,134 @@ class ClaudeTmuxSession:
             capture_output=True,
         )
         return result.returncode == 0
+
+    def register_callbacks(
+        self,
+        on_text: Optional[Callable[[str], None]] = None,
+        on_tool: Optional[Callable[[str, dict], None]] = None,
+        on_user_message: Optional[Callable[[str], None]] = None,
+        on_usage: Optional[Callable[[dict], None]] = None,
+        on_turn_complete: Optional[Callable[[str, bool], None]] = None,
+    ):
+        """Register global callbacks fired for all activity.
+
+        These are called by the background watcher for every entry,
+        regardless of whether the prompt came from the server or was typed directly.
+
+        Args:
+            on_text: Called with text content from assistant messages
+            on_tool: Called with (tool_name, tool_input) for tool invocations
+            on_user_message: Called with prompt text when a non-server user message is seen
+            on_usage: Called with usage dict when a turn ends
+            on_turn_complete: Called with (result_text, server_initiated) when a turn ends
+        """
+        self._callbacks = {
+            "on_text": on_text,
+            "on_tool": on_tool,
+            "on_user_message": on_user_message,
+            "on_usage": on_usage,
+            "on_turn_complete": on_turn_complete,
+        }
+        logger.info("[WRAPPER] Global callbacks registered")
+
+    def start_background_watcher(self):
+        """Start the background watcher thread that polls JSONL and fires callbacks."""
+        if self._watcher_thread and self._watcher_thread.is_alive():
+            logger.warning("[WATCHER] Background watcher already running")
+            return
+
+        self._watcher_running = True
+        self._watcher_thread = threading.Thread(target=self._background_watcher_loop, daemon=True)
+        self._watcher_thread.start()
+        logger.info("[WATCHER] Background watcher started")
+
+    def _background_watcher_loop(self):
+        """Main loop for the background watcher thread.
+
+        Continuously polls the JSONL file for new entries and dispatches
+        to registered callbacks. Detects turn completion via idle timeout.
+        """
+        watcher: Optional[JsonlWatcher] = None
+        last_session_refresh = 0.0
+        last_activity = 0.0
+        accumulated_text: list[str] = []
+
+        while self._watcher_running:
+            # Periodically refresh session ID
+            now = time.time()
+            if now - last_session_refresh > SESSION_REFRESH_INTERVAL:
+                latest = find_latest_session(self.workdir)
+                if latest and latest != self.session_id:
+                    logger.info(f"[WATCHER] Session ID updated: {self.session_id} -> {latest}")
+                    self.session_id = latest
+                    # Reset watcher for new session
+                    watcher = None
+                last_session_refresh = now
+
+            if not self.session_id:
+                time.sleep(POLL_INTERVAL)
+                continue
+
+            # Create watcher if needed (new session or first run)
+            if watcher is None or watcher.session_id != self.session_id:
+                start_line = get_jsonl_line_count(self.workdir, self.session_id)
+                watcher = JsonlWatcher(self.workdir, self.session_id, start_line)
+                accumulated_text.clear()
+                last_activity = 0.0
+
+            # Build callbacks that fire both global and accumulate for turn detection
+            def on_text(text):
+                accumulated_text.append(text)
+                self._pending_text.append(text)
+
+                cb = self._callbacks.get("on_text")
+                if cb:
+                    cb(text)
+                logger.debug(f"[WATCHER] Text: {text[:100]}...")
+
+            def on_tool(name, tool_input):
+                cb = self._callbacks.get("on_tool")
+                if cb:
+                    cb(name, tool_input)
+                logger.debug(f"[WATCHER] Tool: {name}")
+
+            def on_user_message(text):
+                if not self._server_prompt_active:
+                    cb = self._callbacks.get("on_user_message")
+                    if cb:
+                        cb(text)
+                logger.info(f"[WATCHER] User message: {text[:50]}...")
+
+            had_activity = watcher.poll(on_text=on_text, on_tool=on_tool, on_user_message=on_user_message)
+
+            if had_activity:
+                last_activity = time.time()
+
+            # Check idle timeout for turn completion
+            if last_activity > 0 and accumulated_text:
+                idle_elapsed = time.time() - last_activity
+                if idle_elapsed >= IDLE_TIMEOUT:
+                    result = "".join(accumulated_text)
+                    logger.info(f"[WATCHER] Turn complete (idle {idle_elapsed:.1f}s)")
+
+                    # Fire usage callback
+                    self._update_usage(self._callbacks.get("on_usage"))
+
+                    # Fire turn_complete callback
+                    cb = self._callbacks.get("on_turn_complete")
+                    if cb:
+                        cb(result, self._server_prompt_active)
+
+                    # Signal run() if it's waiting
+                    self._turn_complete.set()
+
+                    # Reset for next turn
+                    accumulated_text.clear()
+                    last_activity = 0.0
+
+            time.sleep(POLL_INTERVAL)
+
+        logger.info("[WATCHER] Background watcher stopped")
 
     def _start_session(self):
         """Start Claude interactively in a tmux session."""
@@ -237,12 +398,15 @@ class ClaudeTmuxSession:
     ) -> str:
         """Send a prompt to Claude and wait for the response.
 
+        The background watcher handles JSONL polling and callback firing.
+        This method sends the prompt and waits for turn completion.
+
         Args:
             prompt: The prompt to send to Claude
-            on_text: Callback for text content from assistant
-            on_tool: Callback for tool invocations (name, input)
-            on_result: Callback when final result is ready
-            on_usage: Callback for usage/context stats
+            on_text: Per-request callback for text content from assistant
+            on_tool: Per-request callback for tool invocations (name, input)
+            on_result: Per-request callback when final result is ready
+            on_usage: Per-request callback for usage/context stats
             show_terminal: Ignored (kept for backward compat)
 
         Returns:
@@ -255,8 +419,6 @@ class ClaudeTmuxSession:
                 raise RuntimeError("Failed to start Claude tmux session")
 
             # Always refresh session ID to the latest JSONL file.
-            # The tmux session may have been reused from a previous run,
-            # or Claude may have started a new session within the same tmux.
             latest = find_latest_session(self.workdir)
             if latest:
                 if latest != self.session_id:
@@ -266,61 +428,67 @@ class ClaudeTmuxSession:
             if not self.session_id:
                 raise RuntimeError("No session ID discovered")
 
-            # Record current JSONL position before sending prompt
+            # Small delay to let the TUI be ready for input on first prompt
             start_line = get_jsonl_line_count(self.workdir, self.session_id)
-
-            # Small delay to let the TUI be ready for input
             if start_line == 0:
                 time.sleep(STARTUP_WAIT)
+
+            # Clear turn state and set server flag
+            self._pending_text.clear()
+            self._turn_complete.clear()
+            self._server_prompt_active = True
+
+            # Wrap global callbacks with per-request callbacks
+            orig_on_text = self._callbacks.get("on_text")
+            orig_on_tool = self._callbacks.get("on_tool")
+            orig_on_usage = self._callbacks.get("on_usage")
+
+            def combined_on_text(text):
+                if orig_on_text:
+                    orig_on_text(text)
+                if on_text:
+                    on_text(text)
+
+            def combined_on_tool(name, tool_input):
+                if orig_on_tool:
+                    orig_on_tool(name, tool_input)
+                if on_tool:
+                    on_tool(name, tool_input)
+
+            def combined_on_usage(usage):
+                if orig_on_usage:
+                    orig_on_usage(usage)
+                if on_usage:
+                    on_usage(usage)
+
+            # Temporarily replace global callbacks to include per-request ones
+            self._callbacks["on_text"] = combined_on_text
+            self._callbacks["on_tool"] = combined_on_tool
+            self._callbacks["on_usage"] = combined_on_usage
 
             # Send prompt
             self._send_prompt_via_tmux(prompt)
 
-            # After sending, Claude may create a new JSONL file (especially
-            # for the first prompt in a new tmux session). Re-check.
+            # After sending, Claude may create a new JSONL file
             time.sleep(1.0)
             refreshed = find_latest_session(self.workdir)
             if refreshed and refreshed != self.session_id:
                 logger.info(f"[TMUX] Session ID changed after prompt: {self.session_id} -> {refreshed}")
                 self.session_id = refreshed
-                start_line = 0  # New file, start from beginning
 
-            # Poll JSONL for new entries
-            watcher = JsonlWatcher(self.workdir, self.session_id, start_line)
-            accumulated_text = []
+            # Wait for the background watcher to signal turn completion
+            completed = self._turn_complete.wait(timeout=TURN_TIMEOUT)
 
-            def text_handler(text):
-                accumulated_text.append(text)
-                if on_text:
-                    on_text(text)
-                logger.debug(f"[TMUX] Text: {text[:100]}...")
+            # Restore original global callbacks
+            self._callbacks["on_text"] = orig_on_text
+            self._callbacks["on_tool"] = orig_on_tool
+            self._callbacks["on_usage"] = orig_on_usage
+            self._server_prompt_active = False
 
-            last_activity = time.time()
-            deadline = time.time() + TURN_TIMEOUT
+            if not completed:
+                logger.error("[TMUX] Timeout waiting for turn completion")
 
-            while time.time() < deadline:
-                had_activity = watcher.poll(on_text=text_handler, on_tool=on_tool)
-
-                if had_activity:
-                    last_activity = time.time()
-
-                # Check idle timeout - turn is complete when no new activity
-                idle_elapsed = time.time() - last_activity
-                if idle_elapsed >= IDLE_TIMEOUT and accumulated_text:
-                    logger.info(f"[TMUX] Turn complete (idle {idle_elapsed:.1f}s)")
-                    break
-
-                # Also break if tmux session died
-                if not self.is_alive():
-                    logger.error("[TMUX] Session died while waiting for output")
-                    break
-
-                time.sleep(POLL_INTERVAL)
-
-            result = "".join(accumulated_text)
-
-            # Read usage from transcript
-            self._update_usage(on_usage)
+            result = "".join(self._pending_text)
 
             if on_result:
                 on_result(result)
@@ -367,6 +535,7 @@ class ClaudeTmuxSession:
 
     def shutdown(self):
         """Kill the tmux session entirely."""
+        self._watcher_running = False
         if self.is_alive():
             subprocess.run(["tmux", "kill-session", "-t", TMUX_SESSION], check=False)
             logger.info("[TMUX] Session killed")
