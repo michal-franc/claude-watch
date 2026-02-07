@@ -59,8 +59,15 @@ adb -s <phone> shell am force-stop com.claudewatch.companion
 adb -s <watch> shell am force-stop com.claudewatch.app
 ```
 
+## Git Workflow
+
+- **Never push directly to master.** Always create a feature branch and open a PR.
+- Branch naming: `feature/<short-description>` or `fix/<short-description>`
+- Use `gh pr create` to open the PR, then let the user merge.
+
 ## Don't
 
+- Don't push directly to master - always use a feature branch + PR
 - Don't add HTTPS/TLS support - use reverse proxy if needed
 - Don't modify tmux session name (`claude-watch`) - apps depend on it
 - Don't change WebSocket port (5567) without updating phone app
