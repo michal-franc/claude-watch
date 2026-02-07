@@ -1,22 +1,21 @@
 # Public Viewer Tunnel Setup
 
-Expose the read-only viewer at `toadie.mfranc.com` via Cloudflare Tunnel + Caddy.
+Expose the read-only viewer at `toadie.mfranc.com` via Cloudflare Tunnel.
 
 ## Architecture
 
 ```
-Internet → Cloudflare Access (auth) → cloudflared → Caddy (:8089) → server
+Internet → Cloudflare Access (auth) → cloudflared → server
 ```
 
-Caddy only exposes two routes:
-- `GET /` → viewer page (proxied to `localhost:5566/viewer`)
-- `GET /ws` → WebSocket (proxied to `localhost:5567`)
+cloudflared ingress rules restrict access to two paths:
+- `/viewer` → `localhost:5566` (viewer HTML page)
+- `/ws` → `localhost:5567` (WebSocket)
 
 Everything else returns 403.
 
 ## Prerequisites
 
-- `caddy` — [install](https://caddyserver.com/docs/install)
 - `cloudflared` — [install](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
 - A Cloudflare account with the domain configured
 
@@ -40,8 +39,12 @@ credentials-file: ~/.cloudflared/<tunnel-id>.json
 
 ingress:
   - hostname: toadie.mfranc.com
-    service: http://localhost:8089
-  - service: http_status:404
+    path: ^/viewer$
+    service: http://localhost:5566
+  - hostname: toadie.mfranc.com
+    path: ^/ws$
+    service: http://localhost:5567
+  - service: http_status:403
 ```
 
 Replace `<tunnel-id>` with the UUID from step 1.
@@ -61,15 +64,7 @@ In the Cloudflare Zero Trust dashboard:
 
 This ensures visitors must authenticate via email before reaching the viewer.
 
-## 4. Start Services
-
-Start Caddy (from the project root):
-
-```bash
-caddy run --config tunnel/Caddyfile
-```
-
-Start the tunnel:
+## 4. Start the Tunnel
 
 ```bash
 cloudflared tunnel run toadie
@@ -78,37 +73,14 @@ cloudflared tunnel run toadie
 ## 5. Verify
 
 ```bash
-# Local: should show the viewer page
-curl http://localhost:8089/
-
-# Local: should return 403
-curl http://localhost:8089/api/history
-curl http://localhost:8089/dashboard
-
 # Remote: should redirect to Cloudflare Access login
-curl -I https://toadie.mfranc.com/
+curl -I https://toadie.mfranc.com/viewer
+
+# After authenticating, /viewer should return the page
+# /api/history, /dashboard, etc. should return 403
 ```
 
-## Optional: systemd Services
-
-### Caddy
-
-```ini
-# /etc/systemd/system/caddy-viewer.service
-[Unit]
-Description=Caddy viewer proxy
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/caddy run --config /path/to/claude-watch/tunnel/Caddyfile
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### cloudflared
+## Optional: systemd Service
 
 ```ini
 # /etc/systemd/system/cloudflared-toadie.service
@@ -125,14 +97,12 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
-Enable both:
-
 ```bash
-sudo systemctl enable --now caddy-viewer cloudflared-toadie
+sudo systemctl enable --now cloudflared-toadie
 ```
 
 ## Security Layers
 
 1. **Cloudflare Access** — email/OTP authentication at the edge
-2. **Caddy path restriction** — only `/` and `/ws` are exposed
+2. **cloudflared path restriction** — only `/viewer` and `/ws` are routed; everything else returns 403
 3. **Tailscale auth** — `cloudflared` connects via localhost, which `verify_peer()` always allows; the rest of the server remains protected by Tailscale
