@@ -1,0 +1,1217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Toadie - Claude Watch Viewer</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Connect Screen */
+    .connect-screen {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .connect-title {
+      font-size: 1.8rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .connect-subtitle {
+      color: #888;
+      margin-bottom: 32px;
+      font-size: 0.9rem;
+    }
+    .connect-form {
+      display: flex;
+      gap: 8px;
+      width: 100%;
+      max-width: 500px;
+    }
+    .connect-form input {
+      flex: 1;
+      padding: 10px 14px;
+      background: #252540;
+      border: 1px solid #333;
+      border-radius: 6px;
+      color: #eee;
+      font-size: 0.95rem;
+      font-family: monospace;
+    }
+    .connect-form input:focus { outline: none; border-color: #4ade80; }
+    .connect-form button {
+      padding: 10px 20px;
+      background: #166534;
+      color: #4ade80;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.95rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .connect-form button:hover { background: #15803d; }
+    .connect-error {
+      color: #f87171;
+      font-size: 0.85rem;
+      margin-top: 12px;
+    }
+
+    /* Main Layout */
+    .viewer {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* Status Bar */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      background: #252540;
+      border-bottom: 1px solid #333;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .state-badge {
+      font-size: 0.75rem;
+      padding: 3px 10px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .state-badge.idle { background: #333; color: #888; }
+    .state-badge.listening { background: #1e3a5f; color: #60a5fa; }
+    .state-badge.thinking { background: #854d0e; color: #facc15; animation: pulse 1.5s infinite; }
+    .state-badge.speaking { background: #166534; color: #4ade80; }
+    .state-badge.sleeping { background: #4a1d6e; color: #c084fc; }
+    .state-badge.offline { background: #333; color: #666; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+    .ws-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+    .ws-dot.connected { background: #4ade80; }
+    .ws-dot.disconnected { background: #f87171; }
+
+    .status-spacer { flex: 1; }
+    .status-text {
+      font-size: 0.8rem;
+      color: #888;
+    }
+    .cost-text {
+      font-size: 0.8rem;
+      color: #888;
+      font-family: monospace;
+    }
+
+    /* Content Area */
+    .content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Creature Section */
+    .creature-section {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 16px;
+      flex-shrink: 0;
+    }
+    .creature-section canvas {
+      max-width: 300px;
+      max-height: 300px;
+      width: 100%;
+      height: auto;
+    }
+
+    /* Activity Strip */
+    .activity-strip {
+      display: flex;
+      gap: 8px;
+      padding: 8px 16px;
+      flex-shrink: 0;
+      min-height: 36px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .tool-badge {
+      font-size: 0.7rem;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: #1e3a5f;
+      color: #60a5fa;
+      animation: fadeIn 0.2s ease;
+    }
+    .tool-badge.permission {
+      background: #78350f;
+      color: #f59e0b;
+    }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* Chat Panel */
+    .chat-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-top: 1px solid #333;
+    }
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+    }
+    .chat-message {
+      margin-bottom: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      max-width: 85%;
+      animation: fadeIn 0.2s ease;
+    }
+    .chat-message:last-child { margin-bottom: 0; }
+    .chat-message.user {
+      background: #1e3a5f;
+      margin-left: auto;
+      border-bottom-right-radius: 4px;
+    }
+    .chat-message.claude {
+      background: #252540;
+      margin-right: auto;
+      border-bottom-left-radius: 4px;
+    }
+    .chat-message.streaming {
+      background: #252540;
+      margin-right: auto;
+      border-bottom-left-radius: 4px;
+      border-left: 2px solid #4ade80;
+    }
+    .chat-message-role {
+      font-size: 0.7rem;
+      color: #888;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+    }
+    .chat-message.user .chat-message-role { color: #60a5fa; }
+    .chat-message.claude .chat-message-role,
+    .chat-message.streaming .chat-message-role { color: #4ade80; }
+    .chat-message-content {
+      font-size: 0.9rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .chat-message-time {
+      font-size: 0.65rem;
+      color: #666;
+      margin-top: 6px;
+      text-align: right;
+    }
+    .streaming-cursor {
+      display: inline-block;
+      width: 2px;
+      height: 1em;
+      background: #4ade80;
+      margin-left: 2px;
+      animation: blink 0.8s step-end infinite;
+      vertical-align: text-bottom;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .chat-empty {
+      text-align: center;
+      padding: 30px;
+      color: #666;
+      font-size: 0.9rem;
+    }
+
+    /* Desktop side-by-side */
+    @media (min-width: 768px) {
+      .content {
+        flex-direction: row;
+      }
+      .creature-column {
+        width: 340px;
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid #333;
+      }
+      .creature-section {
+        flex: 1;
+        padding: 24px;
+      }
+      .creature-section canvas {
+        max-width: 300px;
+        max-height: 300px;
+      }
+      .activity-strip {
+        border-top: 1px solid #333;
+      }
+      .chat-column {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .chat-panel {
+        border-top: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- Connect Screen -->
+    <div v-if="!connected && !connecting" class="connect-screen">
+      <div class="connect-title">Toadie Viewer</div>
+      <div class="connect-subtitle">Connect to a Claude Watch server to watch live</div>
+      <div class="connect-form">
+        <input
+          v-model="wsUrl"
+          placeholder="ws://localhost:5567/ws"
+          @keyup.enter="connect"
+        >
+        <button @click="connect">Connect</button>
+      </div>
+      <div v-if="connectError" class="connect-error">{{ connectError }}</div>
+    </div>
+
+    <!-- Connecting -->
+    <div v-if="connecting && !connected" class="connect-screen">
+      <div class="connect-title">Connecting...</div>
+      <div class="connect-subtitle">{{ wsUrl }}</div>
+    </div>
+
+    <!-- Main Viewer -->
+    <div v-if="connected" class="viewer">
+      <div class="status-bar">
+        <span class="ws-dot" :class="wsAlive ? 'connected' : 'disconnected'"></span>
+        <span class="state-badge" :class="creatureState.toLowerCase()">{{ creatureState }}</span>
+        <div class="status-spacer"></div>
+        <span v-if="usage.context_pct" class="status-text">CTX {{ usage.context_pct }}%</span>
+        <span v-if="usage.cost" class="cost-text">${{ usage.cost }}</span>
+      </div>
+
+      <!-- Mobile: single column. Desktop: side-by-side -->
+      <div class="content">
+        <div class="creature-column">
+          <div class="creature-section">
+            <canvas ref="creatureCanvas" width="300" height="300"></canvas>
+          </div>
+          <div class="activity-strip">
+            <span
+              v-for="badge in toolBadges"
+              :key="badge.id"
+              class="tool-badge"
+              :class="{ permission: badge.isPermission }"
+            >{{ badge.label }}</span>
+          </div>
+        </div>
+        <div class="chat-column">
+          <div class="chat-panel">
+            <div class="chat-messages" ref="chatContainer">
+              <div v-if="chatMessages.length === 0 && !streamingText" class="chat-empty">
+                Waiting for messages...
+              </div>
+              <div
+                v-for="(msg, i) in chatMessages"
+                :key="i"
+                class="chat-message"
+                :class="msg.role"
+              >
+                <div class="chat-message-role">{{ msg.role }}</div>
+                <div class="chat-message-content">{{ msg.content }}</div>
+                <div class="chat-message-time">{{ formatTime(msg.timestamp) }}</div>
+              </div>
+              <!-- Streaming partial message -->
+              <div v-if="streamingText" class="chat-message streaming">
+                <div class="chat-message-role">claude</div>
+                <div class="chat-message-content">{{ streamingText }}<span class="streaming-cursor"></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ═══════════════════════════════════════════════════
+    // Creature Renderer - Canvas 2D port of CreatureView.kt
+    // ═══════════════════════════════════════════════════
+    class CreatureRenderer {
+      constructor(canvas) {
+        this.canvas = canvas
+        this.ctx = canvas.getContext('2d')
+        this.state = 'IDLE'
+        this.targetState = 'IDLE'
+
+        // Animation timers
+        this.time = 0
+        this.breathTime = 0
+        this.blinkProgress = 0
+        this.blinkTimer = this._randomBlinkDelay()
+        this.mainAnim = 0
+        this.thinkAnim = 0
+
+        // State interpolation (350ms)
+        this.stateTransition = 1
+        this.hornAngle = 0
+        this.targetHornAngle = 0
+        this.eyeClosure = 0
+        this.targetEyeClosure = 0
+        this.pupilOffsetY = 0
+        this.targetPupilOffsetY = 0
+        this.grayAmount = 0
+        this.targetGrayAmount = 0
+
+        // Particles
+        this.particles = []
+        this.lastSpawnTime = 0
+
+        this.animFrameId = null
+        this.lastFrameTime = 0
+      }
+
+      start() {
+        this.lastFrameTime = performance.now()
+        this._loop()
+      }
+
+      stop() {
+        if (this.animFrameId) cancelAnimationFrame(this.animFrameId)
+      }
+
+      setState(newState) {
+        const s = newState.toUpperCase()
+        if (s === this.targetState) return
+        this.targetState = s
+        this.stateTransition = 0
+
+        const stateMap = {
+          LISTENING: { horn: -15, closure: 0, pupilY: -2, gray: 0 },
+          THINKING:  { horn: 0,   closure: 1, pupilY: 0,  gray: 0 },
+          SLEEPING:  { horn: 15,  closure: 1, pupilY: 0,  gray: 0 },
+          OFFLINE:   { horn: 25,  closure: 0, pupilY: 4,  gray: 1 },
+          IDLE:      { horn: 0,   closure: 0, pupilY: 0,  gray: 0 },
+          SPEAKING:  { horn: 0,   closure: 0, pupilY: 0,  gray: 0 },
+        }
+        const t = stateMap[s] || stateMap.IDLE
+        this.targetHornAngle = t.horn
+        this.targetEyeClosure = t.closure
+        this.targetPupilOffsetY = t.pupilY
+        this.targetGrayAmount = t.gray
+      }
+
+      _randomBlinkDelay() {
+        return 2 + Math.random() * 3
+      }
+
+      _loop() {
+        const now = performance.now()
+        const dt = Math.min((now - this.lastFrameTime) / 1000, 0.05)
+        this.lastFrameTime = now
+
+        this._update(dt)
+        this._draw()
+
+        this.animFrameId = requestAnimationFrame(() => this._loop())
+      }
+
+      _update(dt) {
+        this.time += dt
+        this.breathTime += dt / 3 // 3s cycle
+        this.mainAnim += dt       // 1s cycle
+        this.thinkAnim += dt / 2  // 2s cycle
+
+        // State transition (350ms)
+        if (this.stateTransition < 1) {
+          this.stateTransition = Math.min(1, this.stateTransition + dt / 0.35)
+          const t = this._ease(this.stateTransition)
+          this.hornAngle += (this.targetHornAngle - this.hornAngle) * t
+          this.eyeClosure += (this.targetEyeClosure - this.eyeClosure) * t
+          this.pupilOffsetY += (this.targetPupilOffsetY - this.pupilOffsetY) * t
+          this.grayAmount += (this.targetGrayAmount - this.grayAmount) * t
+          if (this.stateTransition >= 1) {
+            this.state = this.targetState
+            this.hornAngle = this.targetHornAngle
+            this.eyeClosure = this.targetEyeClosure
+            this.pupilOffsetY = this.targetPupilOffsetY
+            this.grayAmount = this.targetGrayAmount
+          }
+        }
+
+        // Blink (skip during sleeping/thinking)
+        const canBlink = this.targetState !== 'SLEEPING' && this.targetState !== 'THINKING'
+        if (this.blinkProgress > 0) {
+          this.blinkProgress -= dt / 0.1 // 200ms total (up+down)
+          if (this.blinkProgress < 0) this.blinkProgress = 0
+        } else if (canBlink) {
+          this.blinkTimer -= dt
+          if (this.blinkTimer <= 0) {
+            this.blinkProgress = 1
+            this.blinkTimer = this._randomBlinkDelay()
+          }
+        }
+
+        // Particles
+        this._updateParticles(dt)
+      }
+
+      _ease(t) {
+        // AccelerateDecelerate approximation
+        return t * t * (3 - 2 * t)
+      }
+
+      _updateParticles(dt) {
+        // Spawn
+        const spawnIntervals = {
+          SPEAKING: 0.08, THINKING: 0.15, LISTENING: 0.2,
+          IDLE: 0.6, SLEEPING: 0.4, OFFLINE: Infinity
+        }
+        const interval = spawnIntervals[this.targetState] || Infinity
+        this.lastSpawnTime += dt
+        if (this.lastSpawnTime >= interval && this.particles.length < 15) {
+          this.lastSpawnTime = 0
+          this._spawnParticle()
+        }
+
+        // Update
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+          const p = this.particles[i]
+          p.x += p.vx * dt
+          p.y += p.vy * dt
+          p.life -= dt * 0.8
+          if (p.type === 'ring') p.size += 40 * dt
+          if (p.life <= 0) this.particles.splice(i, 1)
+        }
+      }
+
+      _spawnParticle() {
+        const w = this.canvas.width, h = this.canvas.height
+        const cx = w / 2, cy = h * 0.5
+        const br = Math.min(w, h) * 0.3
+
+        const s = this.targetState
+        let p = null
+
+        if (s === 'SPEAKING') {
+          p = {
+            x: cx + (Math.random() - 0.5) * br,
+            y: cy + (Math.random() - 0.5) * br * 0.5,
+            vx: (Math.random() - 0.5) * 30,
+            vy: -30 - Math.random() * 30,
+            life: 1, size: 3 + Math.random() * 3,
+            color: '#FFD700', alpha: 0.78, type: 'sparkle'
+          }
+        } else if (s === 'IDLE') {
+          p = {
+            x: cx + (Math.random() - 0.5) * br * 2,
+            y: cy + (Math.random() - 0.5) * br,
+            vx: (Math.random() - 0.5) * 10,
+            vy: -5 - Math.random() * 5,
+            life: 1, size: 2 + Math.random() * 2,
+            color: '#66BB6A', alpha: 0.31, type: 'sparkle'
+          }
+        } else if (s === 'THINKING') {
+          p = {
+            x: cx + br * 0.8 + (Math.random() - 0.5) * 10,
+            y: cy - br * 0.5 + (Math.random() - 0.5) * 20,
+            vx: 8 + Math.random() * 12,
+            vy: -15 - Math.random() * 10,
+            life: 1, size: 3 + Math.random() * 4,
+            color: '#CCDDFF', alpha: 0.63, type: 'bubble'
+          }
+        } else if (s === 'LISTENING') {
+          const side = Math.random() > 0.5 ? 1 : -1
+          p = {
+            x: cx + side * br * 0.4,
+            y: cy - br * 0.75,
+            vx: 0, vy: 0,
+            life: 1, size: 5,
+            color: '#66BB6A', alpha: 0.47, type: 'ring'
+          }
+        } else if (s === 'SLEEPING') {
+          p = {
+            x: cx + (Math.random() - 0.5) * br * 2,
+            y: cy - br * 0.3 - Math.random() * br * 0.7,
+            vx: (Math.random() - 0.5) * 6,
+            vy: -3 - Math.random() * 5,
+            life: 1, size: 2 + Math.random() * 2,
+            color: '#FFFFFF', alpha: 0.39, type: 'star'
+          }
+        }
+
+        if (p) this.particles.push(p)
+      }
+
+      _draw() {
+        const ctx = this.ctx
+        const w = this.canvas.width, h = this.canvas.height
+        ctx.clearRect(0, 0, w, h)
+
+        const cx = w / 2, cy = h * 0.5
+        const br = Math.min(w, h) * 0.3
+
+        // Breathing scale
+        const breathCycle = (Math.cos(this.breathTime * Math.PI * 2) + 1) / 2
+        const breathScale = 1.0 + breathCycle * 0.03
+
+        // Speaking bounce
+        const mainCycle = (Math.cos(this.mainAnim * Math.PI * 2) + 1) / 2
+        const bounceOffset = this.targetState === 'SPEAKING' ? Math.sin(this.mainAnim * Math.PI * 2) * 10 : 0
+
+        // Apply grayscale for OFFLINE
+        if (this.grayAmount > 0.01) {
+          ctx.filter = `grayscale(${this.grayAmount})`
+        }
+
+        ctx.save()
+
+        // 1. Shadow
+        this._drawShadow(ctx, cx, cy, br, breathScale, bounceOffset)
+
+        // 2. Glow
+        this._drawGlow(ctx, cx, cy, br, breathScale)
+
+        // Body group: apply breathing + bounce
+        ctx.save()
+        ctx.translate(cx, cy)
+        ctx.scale(breathScale, breathScale)
+        ctx.translate(-cx, -cy)
+        ctx.translate(0, -bounceOffset)
+
+        // 3. Body
+        this._drawBody(ctx, cx, cy, br)
+
+        // 4. Horns
+        this._drawHorns(ctx, cx, cy, br)
+
+        // 5. Fur tufts
+        this._drawFur(ctx, cx, cy, br)
+
+        // 6. Eyes
+        this._drawEyes(ctx, cx, cy, br)
+
+        // 7. Nose
+        this._drawNose(ctx, cx, cy, br)
+
+        // 8. Mouth
+        this._drawMouth(ctx, cx, cy, br)
+
+        ctx.restore() // body group
+
+        // 9. Thinking bubbles / Zzz
+        if (this.targetState === 'THINKING') this._drawThinkingBubbles(ctx, cx, cy, br)
+        if (this.targetState === 'SLEEPING') this._drawZzz(ctx, cx, cy, br)
+
+        // 10. Particles
+        this._drawParticles(ctx)
+
+        ctx.restore()
+        ctx.filter = 'none'
+      }
+
+      _drawShadow(ctx, cx, cy, br, breathScale, bounceOffset) {
+        const sx = cx
+        const sy = cy + br * 1.15 - bounceOffset * 0.3
+        const rx = br * 0.8 * breathScale
+        const ry = br * 0.15
+
+        const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, rx)
+        grad.addColorStop(0.3, 'rgba(0,0,0,0.2)')
+        grad.addColorStop(1, 'rgba(0,0,0,0)')
+
+        ctx.save()
+        ctx.translate(sx, sy)
+        ctx.scale(1, ry / rx)
+        ctx.translate(-sx, -sy)
+        ctx.beginPath()
+        ctx.arc(sx, sy, rx, 0, Math.PI * 2)
+        ctx.fillStyle = grad
+        ctx.fill()
+        ctx.restore()
+      }
+
+      _drawGlow(ctx, cx, cy, br, breathScale) {
+        const glowColors = {
+          IDLE:      'rgba(102,187,106,0.16)',
+          SPEAKING:  'rgba(102,187,106,0.16)',
+          LISTENING: 'rgba(102,187,106,0.20)',
+          SLEEPING:  'rgba(156,39,176,0.12)',
+          THINKING:  null, // dynamic
+          OFFLINE:   null,
+        }
+
+        let color = glowColors[this.targetState]
+        if (this.targetState === 'THINKING') {
+          const pulseAlpha = 0.12 + Math.sin(this.thinkAnim * Math.PI * 2) * 0.08
+          color = `rgba(0,153,255,${pulseAlpha})`
+        }
+        if (!color) return
+
+        const gy = cy + br * 0.9
+        const gr = br * 0.9 * breathScale
+
+        const grad = ctx.createRadialGradient(cx, gy, 0, cx, gy, gr)
+        grad.addColorStop(0, color)
+        grad.addColorStop(1, 'rgba(0,0,0,0)')
+
+        ctx.save()
+        ctx.translate(cx, gy)
+        ctx.scale(1, 0.4)
+        ctx.translate(-cx, -gy)
+        ctx.beginPath()
+        ctx.arc(cx, gy, gr, 0, Math.PI * 2)
+        ctx.fillStyle = grad
+        ctx.fill()
+        ctx.restore()
+      }
+
+      _drawBody(ctx, cx, cy, br) {
+        const wobble = this.targetState === 'SPEAKING'
+          ? Math.sin(this.mainAnim * Math.PI * 4) * 5 : 0
+        const rx = br * 1.15 + wobble
+        const ry = br * 0.95
+
+        // Main head oval
+        const grad = ctx.createRadialGradient(cx, cy - br * 0.3, 0, cx, cy - br * 0.3, br * 1.5)
+        grad.addColorStop(0.3, '#A8D5A2')
+        grad.addColorStop(1, '#6B8E6B')
+
+        ctx.beginPath()
+        ctx.ellipse(cx, cy + ry * 0.1, rx, ry, 0, 0, Math.PI * 2)
+        ctx.fillStyle = grad
+        ctx.fill()
+
+        // Jaw bump
+        const jawRx = br * 0.7
+        const jawRy = br * 0.32
+        ctx.beginPath()
+        ctx.ellipse(cx, cy + ry * 0.75, jawRx, jawRy, 0, 0, Math.PI * 2)
+        ctx.fillStyle = grad
+        ctx.fill()
+      }
+
+      _drawHorns(ctx, cx, cy, br) {
+        const hornW = br * 0.15
+        const hornH = br * 0.55
+        const spacing = br * 0.4
+
+        const sides = [-1, 1]
+        for (const side of sides) {
+          const baseX = cx + side * spacing
+          const baseY = cy - br * 0.75
+
+          ctx.save()
+          ctx.translate(baseX, baseY)
+          ctx.rotate(this.hornAngle * Math.PI / 180 * side)
+
+          const grad = ctx.createLinearGradient(0, 0, 0, -hornH)
+          grad.addColorStop(0, '#C8A882')
+          grad.addColorStop(1, '#E8B4B8')
+
+          ctx.beginPath()
+          ctx.moveTo(-hornW, 0)
+          ctx.lineTo(side * hornW * 0.3, -hornH)
+          ctx.lineTo(hornW, 0)
+          ctx.closePath()
+          ctx.fillStyle = grad
+          ctx.fill()
+
+          ctx.restore()
+        }
+      }
+
+      _drawFur(ctx, cx, cy, br) {
+        const alpha = this.targetState === 'SLEEPING' ? 0.55 : 0.71
+        const furOffset = this.targetState === 'SPEAKING'
+          ? Math.sin(this.mainAnim * Math.PI * 3) * 3
+          : this.targetState === 'SLEEPING' ? 2 : 0
+
+        ctx.strokeStyle = `rgba(122,154,106,${alpha})`
+        ctx.lineWidth = br * 0.04
+        ctx.lineCap = 'round'
+
+        for (const side of [-1, 1]) {
+          const baseX = cx + side * br * 0.95
+          const baseY = cy - br * 0.05
+
+          for (let i = 0; i < 5; i++) {
+            const offsetY = i * br * 0.08
+            ctx.beginPath()
+            ctx.moveTo(baseX, baseY + offsetY)
+            ctx.quadraticCurveTo(
+              baseX + side * br * 0.2, baseY + offsetY + br * 0.05 + furOffset,
+              baseX + side * br * 0.15, baseY + offsetY + br * 0.12 + furOffset
+            )
+            ctx.stroke()
+          }
+        }
+      }
+
+      _drawEyes(ctx, cx, cy, br) {
+        const eyeR = br * 0.22
+        const eyeSpacing = br * 0.38
+        const eyeY = cy - br * 0.18
+        const effectiveClosure = Math.max(this.eyeClosure, this.blinkProgress > 0 ? 1 - Math.abs(this.blinkProgress * 2 - 1) : 0)
+        const eyeScaleY = 1 - effectiveClosure * 0.9
+
+        for (const side of [-1, 1]) {
+          const eyeX = cx + side * eyeSpacing
+
+          ctx.save()
+          ctx.translate(eyeX, eyeY)
+          ctx.scale(1, eyeScaleY)
+          ctx.translate(-eyeX, -eyeY)
+
+          // Eye glow (behind, not for offline/sleeping)
+          if (this.targetState !== 'OFFLINE' && this.targetState !== 'SLEEPING') {
+            const glowGrad = ctx.createRadialGradient(eyeX, eyeY, 0, eyeX, eyeY, eyeR * 1.6)
+            glowGrad.addColorStop(0.2, 'rgba(232,180,0,0.16)')
+            glowGrad.addColorStop(1, 'rgba(232,180,0,0)')
+            ctx.beginPath()
+            ctx.arc(eyeX, eyeY, eyeR * 1.6, 0, Math.PI * 2)
+            ctx.fillStyle = glowGrad
+            ctx.fill()
+          }
+
+          // Sclera
+          const scleraGrad = ctx.createRadialGradient(eyeX, eyeY, 0, eyeX, eyeY, eyeR)
+          scleraGrad.addColorStop(0.5, '#FFFFFF')
+          scleraGrad.addColorStop(1, '#E6E6E6')
+          ctx.beginPath()
+          ctx.arc(eyeX, eyeY, eyeR, 0, Math.PI * 2)
+          ctx.fillStyle = scleraGrad
+          ctx.fill()
+
+          // Iris & pupil (only when eyes open enough)
+          if (effectiveClosure < 0.5) {
+            const irisR = eyeR * 0.6
+            const asymOffset = side === -1 ? -1 : 1.5
+            const irisX = eyeX + asymOffset
+            const irisY = eyeY + this.pupilOffsetY
+
+            // Iris
+            const irisGrad = ctx.createRadialGradient(irisX, irisY, 0, irisX, irisY, irisR)
+            irisGrad.addColorStop(0, '#E8B400')
+            irisGrad.addColorStop(1, '#B8860B')
+            ctx.beginPath()
+            ctx.arc(irisX, irisY, irisR, 0, Math.PI * 2)
+            ctx.fillStyle = irisGrad
+            ctx.fill()
+
+            // Pupil dilation
+            const dilateMap = { LISTENING: 1.15, THINKING: 0.85 }
+            const dilate = dilateMap[this.targetState] || 1.0
+            const pupilR = irisR * 0.55 * dilate
+
+            ctx.beginPath()
+            ctx.arc(irisX, irisY, pupilR, 0, Math.PI * 2)
+            ctx.fillStyle = '#000'
+            ctx.fill()
+
+            // Highlight
+            ctx.beginPath()
+            ctx.arc(eyeX - eyeR * 0.25, eyeY - eyeR * 0.25, eyeR * 0.2, 0, Math.PI * 2)
+            ctx.fillStyle = '#fff'
+            ctx.fill()
+          }
+
+          ctx.restore()
+        }
+      }
+
+      _drawNose(ctx, cx, cy, br) {
+        const noseX = cx
+        const noseY = cy + br * 0.12
+        const noseRx = br * 0.08
+        const noseRy = br * 0.06
+
+        const noseGrad = ctx.createRadialGradient(noseX, noseY, 0, noseX, noseY, noseRx * 1.5)
+        noseGrad.addColorStop(0.3, '#6B8E6B')
+        noseGrad.addColorStop(1, '#7A9A6A')
+
+        ctx.beginPath()
+        ctx.ellipse(noseX, noseY, noseRx, noseRy, 0, 0, Math.PI * 2)
+        ctx.fillStyle = noseGrad
+        ctx.fill()
+
+        // Highlight
+        ctx.beginPath()
+        ctx.ellipse(noseX - noseRx * 0.2, noseY - noseRy * 0.3, noseRx * 0.3, noseRy * 0.25, 0, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(255,255,255,0.24)'
+        ctx.fill()
+      }
+
+      _drawMouth(ctx, cx, cy, br) {
+        const mouthY = cy + br * 0.38
+        const mouthW = br * 0.6
+
+        ctx.strokeStyle = '#000'
+        ctx.lineWidth = 4
+        ctx.lineCap = 'round'
+
+        if (this.targetState === 'SPEAKING') {
+          // Animated open mouth
+          const openAmount = Math.sin(this.mainAnim * Math.PI * 3) * 0.5 + 0.5
+          const mw = mouthW * 0.6
+          const mh = br * 0.25 * openAmount
+          ctx.beginPath()
+          ctx.ellipse(cx, mouthY, mw, Math.max(mh, 2), 0, 0, Math.PI * 2)
+          ctx.fillStyle = '#000'
+          ctx.fill()
+        } else if (this.targetState === 'OFFLINE') {
+          // Sad frown
+          ctx.beginPath()
+          ctx.moveTo(cx - mouthW * 0.7, mouthY + 10)
+          ctx.quadraticCurveTo(cx, mouthY - 12, cx + mouthW * 0.7, mouthY + 10)
+          ctx.stroke()
+        } else {
+          // Wide grin
+          ctx.beginPath()
+          ctx.moveTo(cx - mouthW, mouthY)
+          ctx.bezierCurveTo(
+            cx - mouthW * 0.5, mouthY + 25,
+            cx + mouthW * 0.5, mouthY + 25,
+            cx + mouthW, mouthY
+          )
+          ctx.stroke()
+
+          // Subtle underbite
+          ctx.save()
+          ctx.globalAlpha = 0.31
+          ctx.lineWidth = 2
+          ctx.beginPath()
+          ctx.moveTo(cx - mouthW * 0.5, mouthY + 18)
+          ctx.quadraticCurveTo(cx, mouthY + 22, cx + mouthW * 0.5, mouthY + 18)
+          ctx.stroke()
+          ctx.restore()
+        }
+      }
+
+      _drawThinkingBubbles(ctx, cx, cy, br) {
+        const sizes = [6, 10, 16]
+        const offsets = [0, 20, 45]
+        const t = (this.thinkAnim * 2) % 1
+
+        for (let i = 0; i < 3; i++) {
+          const alpha = (t + i * 0.3) % 1
+          const xOff = offsets[i] * Math.cos(alpha * Math.PI * 0.2)
+          const yOff = -alpha * 10
+          const opacity = 0.7 * (1 - alpha * 0.5)
+
+          ctx.beginPath()
+          ctx.arc(
+            cx + br * 1.2 + xOff,
+            cy - br * 0.5 + yOff,
+            sizes[i], 0, Math.PI * 2
+          )
+          ctx.fillStyle = `rgba(255,255,255,${opacity})`
+          ctx.fill()
+        }
+      }
+
+      _drawZzz(ctx, cx, cy, br) {
+        const t = (this.mainAnim % 1)
+        const texts = [
+          { text: 'z', size: 22, x: br * 0.8, y: -br * 0.3 - t * 20, alpha: 1 },
+          { text: 'z', size: 28, x: br * 0.8 + 15, y: -br * 0.3 - 25 - t * 20, alpha: 0.7 },
+          { text: 'Z', size: 34, x: br * 0.8 + 35, y: -br * 0.3 - 55 - t * 20, alpha: 0.47 },
+        ]
+        for (const z of texts) {
+          ctx.save()
+          ctx.globalAlpha = z.alpha
+          ctx.fillStyle = '#fff'
+          ctx.font = `bold ${z.size}px sans-serif`
+          ctx.fillText(z.text, cx + z.x, cy + z.y)
+          ctx.restore()
+        }
+      }
+
+      _drawParticles(ctx) {
+        for (const p of this.particles) {
+          const alpha = p.alpha * p.life
+          ctx.save()
+          ctx.globalAlpha = alpha
+
+          if (p.type === 'sparkle') {
+            // Diamond
+            const s = p.size
+            ctx.beginPath()
+            ctx.moveTo(p.x, p.y - s)
+            ctx.lineTo(p.x + s * 0.6, p.y)
+            ctx.lineTo(p.x, p.y + s)
+            ctx.lineTo(p.x - s * 0.6, p.y)
+            ctx.closePath()
+            ctx.fillStyle = p.color
+            ctx.fill()
+          } else if (p.type === 'bubble') {
+            ctx.beginPath()
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
+            ctx.fillStyle = p.color
+            ctx.fill()
+          } else if (p.type === 'ring') {
+            ctx.beginPath()
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
+            ctx.strokeStyle = p.color
+            ctx.lineWidth = 2
+            ctx.stroke()
+          } else if (p.type === 'star') {
+            const s = p.size
+            ctx.beginPath()
+            ctx.moveTo(p.x, p.y - s)
+            ctx.lineTo(p.x + s * 0.3, p.y - s * 0.3)
+            ctx.lineTo(p.x + s, p.y)
+            ctx.lineTo(p.x + s * 0.3, p.y + s * 0.3)
+            ctx.lineTo(p.x, p.y + s)
+            ctx.lineTo(p.x - s * 0.3, p.y + s * 0.3)
+            ctx.lineTo(p.x - s, p.y)
+            ctx.lineTo(p.x - s * 0.3, p.y - s * 0.3)
+            ctx.closePath()
+            ctx.fillStyle = p.color
+            ctx.fill()
+          }
+
+          ctx.restore()
+        }
+      }
+    }
+
+    // ═══════════════════════════════════════════════════
+    // Vue App
+    // ═══════════════════════════════════════════════════
+    const { createApp, ref, onMounted, onUnmounted, nextTick, watch } = Vue
+
+    createApp({
+      setup() {
+        // Connection
+        const wsUrl = ref(localStorage.getItem('viewer_ws_url') || 'ws://localhost:5567/ws')
+        const connected = ref(false)
+        const connecting = ref(false)
+        const wsAlive = ref(false)
+        const connectError = ref('')
+
+        // State
+        const creatureState = ref('OFFLINE')
+        const chatMessages = ref([])
+        const streamingText = ref('')
+        const toolBadges = ref([])
+        const usage = ref({})
+        let badgeCounter = 0
+
+        // Refs
+        const creatureCanvas = ref(null)
+        const chatContainer = ref(null)
+
+        let ws = null
+        let renderer = null
+        let reconnectDelay = 1000
+        let reconnectTimer = null
+
+        // Auto-connect from URL param
+        const urlParams = new URLSearchParams(window.location.search)
+        const wsParam = urlParams.get('ws')
+        if (wsParam) {
+          wsUrl.value = wsParam
+        }
+
+        function formatTime(iso) {
+          if (!iso) return ''
+          return new Date(iso).toLocaleTimeString()
+        }
+
+        function scrollChat() {
+          if (!chatContainer.value) return
+          const c = chatContainer.value
+          const atBottom = c.scrollHeight - c.scrollTop <= c.clientHeight + 60
+          if (atBottom) {
+            nextTick(() => { c.scrollTop = c.scrollHeight })
+          }
+        }
+
+        function addToolBadge(label, isPermission) {
+          const id = ++badgeCounter
+          toolBadges.value.push({ id, label, isPermission })
+          if (toolBadges.value.length > 5) toolBadges.value.shift()
+          if (!isPermission) {
+            setTimeout(() => {
+              toolBadges.value = toolBadges.value.filter(b => b.id !== id)
+            }, 3000)
+          }
+        }
+
+        function clearPermissionBadge(requestId) {
+          toolBadges.value = toolBadges.value.filter(b => !b.isPermission || b.requestId !== requestId)
+        }
+
+        function handleMessage(msg) {
+          switch (msg.type) {
+            case 'state':
+              creatureState.value = (msg.status || 'idle').toUpperCase()
+              if (renderer) renderer.setState(creatureState.value)
+              break
+
+            case 'history':
+              chatMessages.value = msg.messages || []
+              streamingText.value = ''
+              nextTick(scrollChat)
+              break
+
+            case 'chat':
+              streamingText.value = ''
+              chatMessages.value.push({
+                role: msg.role,
+                content: msg.content,
+                timestamp: msg.timestamp
+              })
+              while (chatMessages.value.length > 100) chatMessages.value.shift()
+              scrollChat()
+              break
+
+            case 'text_chunk':
+              streamingText.value += (msg.text || msg.content || '')
+              scrollChat()
+              break
+
+            case 'tool':
+              addToolBadge(msg.tool || msg.name || 'tool', false)
+              break
+
+            case 'permission':
+              addToolBadge(msg.tool_name || 'permission', true)
+              break
+
+            case 'permission_resolved':
+              clearPermissionBadge(msg.request_id)
+              break
+
+            case 'usage':
+              usage.value = {
+                context_pct: msg.context_pct || msg.percent,
+                cost: msg.cost
+              }
+              break
+
+            case 'clients':
+              break
+          }
+        }
+
+        function connectWs() {
+          if (ws) {
+            ws.onclose = null
+            ws.close()
+          }
+
+          connecting.value = true
+          connectError.value = ''
+
+          const url = wsUrl.value + (wsUrl.value.includes('?') ? '&' : '?') +
+            'device=viewer&id=viewer-' + Math.random().toString(36).slice(2, 8)
+
+          try {
+            ws = new WebSocket(url)
+          } catch (e) {
+            connecting.value = false
+            connectError.value = 'Invalid WebSocket URL'
+            return
+          }
+
+          ws.onopen = () => {
+            connecting.value = false
+            connected.value = true
+            wsAlive.value = true
+            reconnectDelay = 1000
+            localStorage.setItem('viewer_ws_url', wsUrl.value)
+
+            // Init creature renderer after canvas is mounted
+            nextTick(() => {
+              if (creatureCanvas.value && !renderer) {
+                renderer = new CreatureRenderer(creatureCanvas.value)
+                renderer.setState(creatureState.value)
+                renderer.start()
+              }
+            })
+          }
+
+          ws.onmessage = (event) => {
+            try {
+              handleMessage(JSON.parse(event.data))
+            } catch (e) {
+              console.error('[Viewer] Bad message:', e)
+            }
+          }
+
+          ws.onclose = () => {
+            wsAlive.value = false
+            if (connected.value) {
+              // Was connected, set creature to offline and try to reconnect
+              creatureState.value = 'OFFLINE'
+              if (renderer) renderer.setState('OFFLINE')
+              reconnectTimer = setTimeout(() => {
+                reconnectDelay = Math.min(reconnectDelay * 1.5, 15000)
+                connectWs()
+              }, reconnectDelay)
+            } else {
+              connecting.value = false
+              connectError.value = 'Connection failed'
+            }
+          }
+
+          ws.onerror = () => {
+            // onclose will fire after this
+          }
+        }
+
+        function connect() {
+          if (!wsUrl.value) return
+          connectWs()
+        }
+
+        // Auto-connect if ws param provided
+        onMounted(() => {
+          if (wsParam) {
+            connect()
+          }
+        })
+
+        onUnmounted(() => {
+          if (renderer) renderer.stop()
+          if (ws) ws.close()
+          if (reconnectTimer) clearTimeout(reconnectTimer)
+        })
+
+        return {
+          wsUrl, connected, connecting, wsAlive, connectError,
+          creatureState, chatMessages, streamingText,
+          toolBadges, usage,
+          creatureCanvas, chatContainer,
+          connect, formatTime
+        }
+      }
+    }).mount('#app')
+  </script>
+</body>
+</html>
