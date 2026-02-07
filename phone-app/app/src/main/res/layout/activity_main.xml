@@ -178,6 +178,18 @@
         android:padding="8dp"
         android:background="@color/background_surface">
 
+        <!-- Command menu button -->
+        <ImageButton
+            android:id="@+id/commandButton"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@android:drawable/ic_menu_more"
+            android:contentDescription="Commands"
+            android:scaleType="centerInside"
+            android:padding="6dp"
+            app:tint="@android:color/darker_gray" />
+
         <!-- Voice record button -->
         <ImageButton
             android:id="@+id/voiceButton"

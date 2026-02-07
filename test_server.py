@@ -853,6 +853,132 @@ class TestConnectedClients:
         server.websocket_clients.clear()
 
 
+class TestCommandEndpoint:
+    """Tests for POST /api/command"""
+
+    def setup_method(self):
+        server.chat_history.clear()
+
+    @patch.object(server.DictationHandler, "__init__", lambda x, *args: None)
+    @patch("server.broadcast_message")
+    @patch("server.ClaudeWrapper")
+    def test_command_clear(self, mock_wrapper_class, mock_broadcast):
+        """Should shutdown wrapper and clear chat history"""
+        mock_instance = MagicMock()
+        mock_wrapper_class._instance = mock_instance
+        server.chat_history.append({"role": "user", "content": "old message"})
+
+        body = json.dumps({"command": "clear"}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = "/api/command"
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_command(len(body))
+
+        handler.send_response.assert_called_with(200)
+        data = json.loads(handler.wfile.getvalue())
+        assert data["status"] == "ok"
+        assert "cleared" in data["message"].lower()
+        mock_instance.shutdown.assert_called_once()
+
+        mock_wrapper_class._instance = None
+
+    @patch.object(server.DictationHandler, "__init__", lambda x, *args: None)
+    @patch("server.broadcast_message")
+    @patch("server.ClaudeWrapper")
+    def test_command_context_with_usage(self, mock_wrapper_class, mock_broadcast):
+        """Should return usage data when available"""
+        mock_instance = MagicMock()
+        mock_instance.last_usage = {
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "cache_read_tokens": 10,
+            "cache_creation_tokens": 5,
+            "total_context": 165,
+            "context_window": 200000,
+            "context_percent": 0.08,
+            "cost_usd": 0.001,
+        }
+        mock_wrapper_class._instance = mock_instance
+
+        body = json.dumps({"command": "context"}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = "/api/command"
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_command(len(body))
+
+        handler.send_response.assert_called_with(200)
+        data = json.loads(handler.wfile.getvalue())
+        assert data["status"] == "ok"
+        assert data["usage"]["input_tokens"] == 100
+        assert data["usage"]["total_context"] == 165
+
+        # Should broadcast usage to WebSocket clients
+        mock_broadcast.assert_called_once()
+        broadcast_data = mock_broadcast.call_args[0][0]
+        assert broadcast_data["type"] == "usage"
+
+        mock_wrapper_class._instance = None
+
+    @patch.object(server.DictationHandler, "__init__", lambda x, *args: None)
+    @patch("server.ClaudeWrapper")
+    def test_command_context_no_usage(self, mock_wrapper_class):
+        """Should return no usage message when no data available"""
+        mock_wrapper_class._instance = None
+
+        body = json.dumps({"command": "context"}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = "/api/command"
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_command(len(body))
+
+        handler.send_response.assert_called_with(200)
+        data = json.loads(handler.wfile.getvalue())
+        assert data["status"] == "ok"
+        assert data["usage"] is None
+
+    @patch.object(server.DictationHandler, "__init__", lambda x, *args: None)
+    def test_command_unknown(self):
+        """Should return 400 for unknown command"""
+        body = json.dumps({"command": "restart_universe"}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = "/api/command"
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_command(len(body))
+
+        handler.send_response.assert_called_with(400)
+        data = json.loads(handler.wfile.getvalue())
+        assert data["status"] == "error"
+        assert "Unknown command" in data["message"]
+
+
 class TestCheckHooksConfigured:
     """Tests for check_hooks_configured function"""
 
