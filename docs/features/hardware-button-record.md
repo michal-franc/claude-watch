@@ -10,9 +10,10 @@ Wear OS doesn't support system-wide hotkey registration, but Galaxy Watch allows
 
 1. `RecordActivity` is a lightweight trampoline activity registered with its own launcher entry labeled "Claude Record"
 2. When launched, it starts `MainActivity` with an `auto_record=true` intent extra and finishes itself
-3. `MainActivity` detects the extra and starts recording:
+3. `MainActivity` detects the extra and acts via `resolveIntentAction()`:
    - **Cold start** (app not running): waits 500ms for WebSocket connection, then starts recording
-   - **Warm relaunch** (app already open): starts recording immediately if idle and connected
+   - **Warm relaunch while idle**: starts recording immediately
+   - **Warm relaunch while already recording**: stops and sends the current recording (toggle behavior)
 
 Normal app launches (from drawer, recent apps) no longer auto-record — only the explicit `auto_record` extra triggers it.
 
@@ -26,12 +27,19 @@ Now double-pressing the hardware button opens Claude Watch and starts recording 
 
 ## Behavior Matrix
 
-| Launch method | Auto-records? |
+| Launch method | Action |
 |---|---|
-| App drawer (Claude Watch) | No |
-| Recent apps | No |
-| Hardware button → Claude Record | Yes |
-| Permission callback (from_permission) | No (resumes normally) |
-| Relaunch while recording | Stops and sends |
-| Relaunch while thinking | Aborts |
-| Relaunch while playing audio | Pauses |
+| App drawer (Claude Watch) | Opens app, no auto-record |
+| Recent apps | Opens app, no auto-record |
+| Hardware button → Claude Record (idle) | Starts recording |
+| Hardware button → Claude Record (recording) | Stops and sends |
+| Hardware button → Claude Record (no mic permission) | Opens app, no recording |
+| Permission callback (from_permission) | Ignored (permission UI resumes) |
+| Normal relaunch while recording | Stops and sends |
+| Normal relaunch while thinking | Aborts Claude |
+| Normal relaunch while playing audio | Pauses playback |
+| Normal relaunch while idle | No action |
+
+## Implementation
+
+Intent routing is handled by `MainActivity.resolveIntentAction()` — a pure static function that maps intent extras and app state to an `IntentAction` enum. This keeps the decision logic testable without needing Android framework dependencies. See `MainActivityTest.kt` for coverage of all branches.
