@@ -104,6 +104,7 @@ adb -s <watch> shell am force-stop com.claudewatch.app
 - `POST /api/response/<id>/ack` - Acknowledge response
 - `GET /api/audio/<id>` - TTS audio file
 - `POST /api/message` - Text message from phone app
+- `POST /api/command` - Session commands (clear, context) from phone app
 - `POST /api/claude/restart` - Restart Claude process
 - `POST /api/prompt/respond` - Respond to Claude prompt
 - `POST /api/permission/request` - Hook submits permission

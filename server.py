@@ -560,6 +560,11 @@ class DictationHandler(BaseHTTPRequestHandler):
             self.handle_claude_restart()
             return
 
+        # Handle command from phone app
+        if self.path == "/api/command":
+            self.handle_command(content_length)
+            return
+
         # Handle permission request from hook
         if self.path == "/api/permission/request":
             self.handle_permission_request(content_length)
@@ -767,6 +772,67 @@ class DictationHandler(BaseHTTPRequestHandler):
             self.send_json(200, {"status": "restarted"})
         except Exception as e:
             logger.error(f"[SERVER] Error restarting Claude: {e}")
+            self.send_json(500, {"error": str(e)})
+
+    def handle_command(self, content_length):
+        """Handle POST /api/command for session commands from phone app"""
+        try:
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode())
+            command = data.get("command", "").strip()
+
+            if command == "clear":
+                self._command_clear()
+            elif command == "context":
+                self._command_context()
+            else:
+                self.send_json(400, {"status": "error", "message": f"Unknown command: {command}"})
+        except json.JSONDecodeError as e:
+            self.send_json(400, {"status": "error", "message": f"Invalid JSON: {e}"})
+
+    def _command_clear(self):
+        """Clear conversation: shutdown wrapper, clear history, broadcast"""
+        global active_claude_wrapper
+        try:
+            wrapper = ClaudeWrapper._instance
+            if wrapper:
+                wrapper.shutdown()
+                active_claude_wrapper = None
+            chat_history.clear()
+            set_claude_state("idle")
+            broadcast_message({"type": "history", "messages": []})
+            add_chat_message("claude", "Conversation cleared.")
+            logger.info("[COMMAND] Conversation cleared")
+            self.send_json(200, {"status": "ok", "message": "Conversation cleared"})
+        except Exception as e:
+            logger.error(f"[COMMAND] Error clearing conversation: {e}")
+            self.send_json(500, {"error": str(e)})
+
+    def _command_context(self):
+        """Return current context usage data"""
+        try:
+            wrapper = ClaudeWrapper._instance
+            usage = wrapper.last_usage if wrapper else None
+
+            if usage:
+                broadcast_message(
+                    {
+                        "type": "usage",
+                        "input_tokens": usage.get("input_tokens", 0),
+                        "output_tokens": usage.get("output_tokens", 0),
+                        "cache_read_tokens": usage.get("cache_read_tokens", 0),
+                        "cache_creation_tokens": usage.get("cache_creation_tokens", 0),
+                        "total_context": usage.get("total_context", 0),
+                        "context_window": usage.get("context_window", 0),
+                        "context_percent": usage.get("context_percent", 0),
+                        "cost_usd": usage.get("cost_usd", 0),
+                    }
+                )
+                self.send_json(200, {"status": "ok", "usage": usage})
+            else:
+                self.send_json(200, {"status": "ok", "usage": None, "message": "No usage data available"})
+        except Exception as e:
+            logger.error(f"[COMMAND] Error getting context: {e}")
             self.send_json(500, {"error": str(e)})
 
     def handle_config_update(self, content_length):

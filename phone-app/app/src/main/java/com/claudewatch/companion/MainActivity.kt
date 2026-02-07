@@ -13,6 +13,7 @@ import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.widget.PopupMenu
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -130,6 +131,10 @@ class MainActivity : AppCompatActivity() {
     private fun setupClickListeners() {
         binding.settingsButton.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
+        }
+
+        binding.commandButton.setOnClickListener { view ->
+            showCommandMenu(view)
         }
 
         binding.kioskExitButton.setOnClickListener {
@@ -290,6 +295,77 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "Error sending text", e)
             false
+        }
+    }
+
+    private fun showCommandMenu(view: View) {
+        val popup = PopupMenu(this, view)
+        popup.menuInflater.inflate(R.menu.commands_menu, popup.menu)
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.command_clear -> {
+                    sendCommand("clear")
+                    true
+                }
+                R.id.command_context -> {
+                    sendCommand("context")
+                    true
+                }
+                else -> false
+            }
+        }
+        popup.show()
+    }
+
+    private fun sendCommand(command: String) {
+        lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    val serverAddress = SettingsActivity.getServerAddress(this@MainActivity)
+                    val baseUrl = "http://${serverAddress.replace(":5567", ":5566")}"
+                    val url = "$baseUrl/api/command"
+
+                    val json = JSONObject().apply {
+                        put("command", command)
+                    }
+
+                    val request = Request.Builder()
+                        .url(url)
+                        .post(json.toString().toRequestBody("application/json".toMediaType()))
+                        .build()
+
+                    httpClient.newCall(request).execute()
+                }
+
+                if (result.isSuccessful) {
+                    val body = result.body?.string()
+                    val json = if (body != null) JSONObject(body) else null
+
+                    when (command) {
+                        "clear" -> {
+                            Toast.makeText(this@MainActivity, "Conversation cleared", Toast.LENGTH_SHORT).show()
+                        }
+                        "context" -> {
+                            val usage = json?.optJSONObject("usage")
+                            if (usage != null) {
+                                val percent = usage.optDouble("context_percent", 0.0).toInt()
+                                val total = usage.optInt("total_context", 0)
+                                val window = usage.optInt("context_window", 0)
+                                val cost = usage.optDouble("cost_usd", 0.0)
+                                val msg = "Context: $percent% ($total/$window tokens)\nCost: ${"$%.4f".format(cost)}"
+                                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(this@MainActivity, "No usage data yet", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                } else {
+                    Toast.makeText(this@MainActivity, "Command failed", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending command", e)
+                Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
