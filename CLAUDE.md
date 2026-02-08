@@ -70,6 +70,14 @@ Apps: Android SDK, Kotlin, Gradle
 Create SVG files in `docs/watch-mockups/` (300x300 round) or `docs/phone-mockups/` (standard mobile).
 Use app colors: blue #0099FF, orange #F59E0B.
 
+## Feature Docs
+
+- [docs/features/hardware-button-record.md](docs/features/hardware-button-record.md) - Watch hardware button double-press to start recording
+- [docs/features/public-viewer-tunnel.md](docs/features/public-viewer-tunnel.md) - Cloudflare Tunnel setup for read-only public viewer access
+- [docs/features/security.md](docs/features/security.md) - Defense-in-depth security layers overview
+- [docs/features/tailscale-auth.md](docs/features/tailscale-auth.md) - Tailscale peer verification for server access control
+- [docs/screenshots.md](docs/screenshots.md) - ADB instructions for capturing phone/watch screenshots
+
 ## Diagrams
 
 Clean style: white background (#ffffff), 1px black stroke rectangles, yellow (#fffde7) containers, mint green (#a5d6a7) highlights. Save to `docs/`.
