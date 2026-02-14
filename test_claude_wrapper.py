@@ -54,13 +54,18 @@ class TestClaudeTmuxSessionSingleton:
         wrapper2 = ClaudeTmuxSession.get_instance("/tmp")
         assert wrapper1 is wrapper2
 
-    @patch.object(ClaudeTmuxSession, "is_alive", return_value=False)
-    def test_get_instance_creates_new_when_dead(self, mock_alive):
+    def test_get_instance_only_creates_after_shutdown(self):
+        """Singleton is only recreated after shutdown() clears it."""
         wrapper1 = ClaudeTmuxSession.get_instance("/tmp")
-        ClaudeTmuxSession._instance = wrapper1
 
+        # Without shutdown, always returns same instance
         wrapper2 = ClaudeTmuxSession.get_instance("/tmp")
-        assert wrapper2 is not wrapper1
+        assert wrapper2 is wrapper1
+
+        # After shutdown clears _instance, a new one is created
+        ClaudeTmuxSession._instance = None
+        wrapper3 = ClaudeTmuxSession.get_instance("/tmp")
+        assert wrapper3 is not wrapper1
 
 
 class TestClaudeTmuxSessionIsAlive:

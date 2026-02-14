@@ -175,9 +175,13 @@ class ClaudeTmuxSession:
 
     @classmethod
     def get_instance(cls, workdir: str, model: str = None) -> "ClaudeTmuxSession":
-        """Get or create the singleton instance."""
+        """Get or create the singleton instance.
+
+        Never recreates while instance exists — run() handles restarting tmux.
+        Only shutdown() clears the instance.
+        """
         with cls._lock:
-            if cls._instance is None or not cls._instance.is_alive():
+            if cls._instance is None:
                 cls._instance = cls(workdir, model)
             return cls._instance
 
@@ -246,6 +250,8 @@ class ClaudeTmuxSession:
             # Refresh session ID periodically or when signaled by run()
             now = time.time()
             force_refresh = self._session_refresh_needed.is_set()
+            if force_refresh:
+                logger.info(f"[WATCHER] Force refresh signaled, session={self.session_id}")
             if force_refresh:
                 self._session_refresh_needed.clear()
             if force_refresh or now - last_session_refresh > SESSION_REFRESH_INTERVAL:
@@ -331,6 +337,7 @@ class ClaudeTmuxSession:
                 # Fire turn_complete callback
                 cb = self._callbacks.get("on_turn_complete")
                 if cb:
+                    logger.info(f"[WATCHER] Firing on_turn_complete, server_prompt_active={self._server_prompt_active}")
                     cb(result, self._server_prompt_active)
 
                 # Signal run() if it's waiting
@@ -455,6 +462,7 @@ class ClaudeTmuxSession:
             # Set server flag FIRST so the watcher knows to suppress on_turn_complete
             # during the potentially slow startup below
             self._server_prompt_active = True
+            logger.info("[TMUX] Server prompt active = True (before startup)")
             self._pending_text.clear()
             self._turn_complete.clear()
 
