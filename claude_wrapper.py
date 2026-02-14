@@ -167,6 +167,7 @@ class ClaudeTmuxSession:
 
         # Signal watcher to immediately refresh session ID (set by run())
         self._session_refresh_needed = threading.Event()
+        self._watcher_start_line: int | None = None  # Set by run() to avoid skipping responses
 
         # Flag: True when run() is active (server-initiated prompt)
         # Used to suppress on_user_message for server prompts (already added by caller)
@@ -262,7 +263,12 @@ class ClaudeTmuxSession:
 
             # Create watcher if needed (new session or first run)
             if watcher is None or watcher.session_id != self.session_id:
-                start_line = get_jsonl_line_count(self.workdir, self.session_id)
+                # Use start_line from run() if available (avoids skipping fast responses)
+                if self._watcher_start_line is not None:
+                    start_line = self._watcher_start_line
+                    self._watcher_start_line = None
+                else:
+                    start_line = get_jsonl_line_count(self.workdir, self.session_id)
                 watcher = JsonlWatcher(self.workdir, self.session_id, start_line)
                 accumulated_text.clear()
                 last_activity = 0.0
@@ -446,9 +452,16 @@ class ClaudeTmuxSession:
             The accumulated result text from Claude
         """
         with self._output_lock:
+            # Set server flag FIRST so the watcher knows to suppress on_turn_complete
+            # during the potentially slow startup below
+            self._server_prompt_active = True
+            self._pending_text.clear()
+            self._turn_complete.clear()
+
             self._start_session()
 
             if not self.is_alive():
+                self._server_prompt_active = False
                 raise RuntimeError("Failed to start Claude tmux session")
 
             # Always refresh session ID to the latest JSONL file.
@@ -459,6 +472,7 @@ class ClaudeTmuxSession:
                 self.session_id = latest
 
             if not self.session_id:
+                self._server_prompt_active = False
                 raise RuntimeError("No session ID discovered")
 
             # Wait for TUI to be ready on first prompt (poll until JSONL has entries)
@@ -469,11 +483,8 @@ class ClaudeTmuxSession:
                     if get_jsonl_line_count(self.workdir, self.session_id) > 0:
                         break
                     time.sleep(0.1)
-
-            # Clear turn state and set server flag
-            self._pending_text.clear()
-            self._turn_complete.clear()
-            self._server_prompt_active = True
+            # Tell the watcher where to start reading for the new session
+            self._watcher_start_line = start_line
 
             # Wrap global callbacks with per-request callbacks
             orig_on_text = self._callbacks.get("on_text")
