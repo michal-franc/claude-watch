@@ -240,6 +240,15 @@ class ClaudeTmuxSession:
         to registered callbacks. Detects turn completion via turn_duration
         signal (primary) or idle timeout (fallback).
         """
+        try:
+            self._background_watcher_loop_inner()
+        except Exception as e:
+            logger.error(f"[WATCHER] Background watcher CRASHED: {e}")
+            import traceback
+
+            logger.error(f"[WATCHER] {traceback.format_exc()}")
+
+    def _background_watcher_loop_inner(self):
         watcher: Optional[JsonlWatcher] = None
         last_session_refresh = 0.0
         last_activity = 0.0
@@ -268,13 +277,17 @@ class ClaudeTmuxSession:
                 continue
 
             # Create watcher if needed (new session or first run)
-            if watcher is None or watcher.session_id != self.session_id:
-                # Use start_line from run() if available (avoids skipping fast responses)
-                if self._watcher_start_line is not None:
+            need_new_watcher = watcher is None or watcher.session_id != self.session_id
+            if need_new_watcher:
+                old_sid = watcher.session_id if watcher else None
+                # _watcher_start_line is only valid for the SAME session (avoids
+                # skipping fast responses). For a new session, start from 0.
+                if self._watcher_start_line is not None and old_sid == self.session_id:
                     start_line = self._watcher_start_line
-                    self._watcher_start_line = None
                 else:
-                    start_line = get_jsonl_line_count(self.workdir, self.session_id)
+                    start_line = 0 if old_sid != self.session_id else get_jsonl_line_count(self.workdir, self.session_id)
+                self._watcher_start_line = None
+                logger.info(f"[WATCHER] Creating new JsonlWatcher: {old_sid} -> {self.session_id} (from line {start_line})")
                 watcher = JsonlWatcher(self.workdir, self.session_id, start_line)
                 accumulated_text.clear()
                 last_activity = 0.0
