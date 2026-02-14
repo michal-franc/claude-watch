@@ -229,7 +229,7 @@ def transcribe_audio(audio_data: bytes) -> str:
         language=transcription_config["language"],
         smart_format=transcription_config["smart_format"],
         punctuate=transcription_config["punctuate"],
-        extra={"mip_opt_out": "true"},
+        mip_opt_out=True,
     )
 
     transcript = ""
