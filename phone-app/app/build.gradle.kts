@@ -21,6 +21,8 @@ tasks.register<JacocoReport>("jacocoTestReport") {
 
     val kotlinClasses = fileTree(layout.buildDirectory.dir("tmp/kotlin-classes/debug")) {
         include("**/wakeword/**")
+        include("**/MainActivity*")
+        include("**/PermissionPromptHelper*")
     }
     classDirectories.setFrom(kotlinClasses)
     sourceDirectories.setFrom(files("src/main/java"))
