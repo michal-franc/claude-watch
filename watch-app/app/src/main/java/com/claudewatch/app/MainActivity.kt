@@ -23,6 +23,7 @@ import android.app.Activity
 import androidx.core.content.ContextCompat
 import androidx.core.app.ActivityCompat
 import androidx.wear.widget.WearableRecyclerView
+import android.os.CountDownTimer
 import android.os.Handler
 import android.os.Looper
 import kotlinx.coroutines.*
@@ -44,6 +45,8 @@ class MainActivity : Activity() {
         private const val PERMISSION_REQUEST_CODE = 1001
         private const val FADE_MS = 200L
         private const val SCALE_MS = 250L
+        private const val MAX_RECORDING_SECONDS = 60
+        private const val WARNING_SECONDS = 10
 
         fun resolveIntentAction(
             fromPermission: Boolean,
@@ -106,6 +109,7 @@ class MainActivity : Activity() {
     private var voiceResponseEnabled = false
     private var currentAudioFile: File? = null
     private var currentRequestId: String? = null
+    private var recordingTimer: CountDownTimer? = null
 
     // WebSocket client (now routes through phone relay)
     private lateinit var wsClient: WatchWebSocketClient
@@ -479,6 +483,7 @@ class MainActivity : Activity() {
             isRecording = true
             vibrate(50)
             updateUIState()
+            startRecordingTimer()
             Log.d(TAG, "Recording started: ${audioFile?.absolutePath}")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start recording", e)
@@ -493,6 +498,7 @@ class MainActivity : Activity() {
     }
 
     private fun stopRecording() {
+        cancelRecordingTimer()
         try {
             mediaRecorder?.apply {
                 stop()
@@ -531,6 +537,41 @@ class MainActivity : Activity() {
                 vibrate(longArrayOf(0, 100, 100, 100))
             }
         }
+    }
+
+    // --- Recording Timer ---
+
+    private fun startRecordingTimer() {
+        recordingTimer = object : CountDownTimer(
+            MAX_RECORDING_SECONDS * 1000L, 1000L
+        ) {
+            override fun onTick(millisUntilFinished: Long) {
+                val secondsLeft = (millisUntilFinished / 1000).toInt()
+                if (isRecording) {
+                    if (secondsLeft <= WARNING_SECONDS) {
+                        recordButton.text = "Stop ($secondsLeft)"
+                        if (secondsLeft == WARNING_SECONDS) {
+                            vibrate(longArrayOf(0, 50, 50, 50))
+                        }
+                    } else {
+                        recordButton.text = "Stop & Send"
+                    }
+                }
+            }
+
+            override fun onFinish() {
+                if (isRecording) {
+                    Log.d(TAG, "Max recording duration reached, auto-stopping")
+                    vibrate(longArrayOf(0, 100, 50, 100, 50, 100))
+                    stopRecordingAndSend()
+                }
+            }
+        }.start()
+    }
+
+    private fun cancelRecordingTimer() {
+        recordingTimer?.cancel()
+        recordingTimer = null
     }
 
     // --- Abort ---
@@ -849,6 +890,7 @@ class MainActivity : Activity() {
     // --- Lifecycle ---
 
     private fun cleanupRecording() {
+        cancelRecordingTimer()
         mediaRecorder?.release()
         mediaRecorder = null
         audioFile?.delete()

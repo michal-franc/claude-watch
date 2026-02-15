@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.CountDownTimer
 import android.graphics.drawable.ClipDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
@@ -57,6 +58,8 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "MainActivity"
         private const val PERMISSION_REQUEST_CODE = 1001
         private const val NOTIFICATION_PERMISSION_CODE = 1002
+        private const val MAX_RECORDING_SECONDS = 60
+        private const val WARNING_SECONDS = 10
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -72,6 +75,7 @@ class MainActivity : AppCompatActivity() {
     private var mediaRecorder: MediaRecorder? = null
     private var audioFile: File? = null
     private var isRecording = false
+    private var recordingTimer: CountDownTimer? = null
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -325,6 +329,7 @@ class MainActivity : AppCompatActivity() {
             isRecording = true
             binding.voiceButton.setBackgroundResource(R.drawable.bg_circle_button_recording)
             Toast.makeText(this, "Recording...", Toast.LENGTH_SHORT).show()
+            startRecordingTimer()
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start recording", e)
@@ -333,6 +338,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopRecordingAndSend() {
+        cancelRecordingTimer()
         try {
             mediaRecorder?.apply {
                 stop()
@@ -350,6 +356,40 @@ class MainActivity : AppCompatActivity() {
                 sendAudioToServer(file)
             }
         }
+    }
+
+    private fun startRecordingTimer() {
+        recordingTimer = object : CountDownTimer(
+            MAX_RECORDING_SECONDS * 1000L, 1000L
+        ) {
+            override fun onTick(millisUntilFinished: Long) {
+                val secondsLeft = (millisUntilFinished / 1000).toInt()
+                if (isRecording && secondsLeft == WARNING_SECONDS) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Recording stops in ${secondsLeft}s",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+
+            override fun onFinish() {
+                if (isRecording) {
+                    Log.d(TAG, "Max recording duration reached, auto-stopping")
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Max recording time reached",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    stopRecordingAndSend()
+                }
+            }
+        }.start()
+    }
+
+    private fun cancelRecordingTimer() {
+        recordingTimer?.cancel()
+        recordingTimer = null
     }
 
     private fun sendAudioToServer(file: File) {
@@ -674,6 +714,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        cancelRecordingTimer()
         mediaRecorder?.release()
         webSocketClient?.destroy()
         httpClient.dispatcher.executorService.shutdown()
