@@ -40,6 +40,13 @@ adb -s <device> shell am force-stop com.claudewatch.app
   Leave worktrees alive after pushing. Only remove if the user explicitly asks.
 - Branch naming: `feature/<short-description>` or `fix/<short-description>`
 
+## Subagents
+
+When spawning subagents (via Task tool) that write code:
+- **Each subagent gets its own worktree** — create a worktree + feature branch before doing any work.
+- **Never push to master** — subagents push only to their feature branch.
+- **All changes go through a PR** — subagent must create a PR for review before anything is merged.
+
 ## Don't
 
 - Don't push directly to master — always use a feature branch + PR
