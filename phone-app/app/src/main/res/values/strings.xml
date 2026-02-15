@@ -20,4 +20,10 @@
     <string name="copied">Copied!</string>
     <string name="agent_thinking">Thinking…</string>
     <string name="agent_using_tool">Using %s…</string>
+    <string name="permissions_header">Permissions</string>
+    <string name="permission_microphone">Microphone</string>
+    <string name="permission_notifications">Notifications</string>
+    <string name="permission_overlay">Draw over other apps</string>
+    <string name="permission_granted">Granted</string>
+    <string name="permission_not_granted">Not granted</string>
 </resources>
