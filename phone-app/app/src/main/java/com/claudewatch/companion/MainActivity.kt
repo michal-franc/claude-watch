@@ -60,6 +60,9 @@ class MainActivity : AppCompatActivity() {
         private const val NOTIFICATION_PERMISSION_CODE = 1002
         private const val MAX_RECORDING_SECONDS = 60
         private const val WARNING_SECONDS = 10
+
+        /** Signals when a permission prompt is active so overlays (e.g. WakeWordActivity) can dismiss. */
+        val permissionPromptActive = MutableStateFlow(false)
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -520,15 +523,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updatePromptUI(prompt: ClaudePrompt?) {
-        if (prompt == null) {
-            binding.promptContainer.visibility = View.GONE
-            return
-        }
+        val viewState = PermissionPromptHelper.computeViewState(prompt)
+        binding.promptContainer.visibility = viewState.promptContainerVisibility
+        binding.creatureView.visibility = viewState.creatureViewVisibility
+        binding.inputBar.visibility = viewState.inputBarVisibility
+        permissionPromptActive.value = viewState.permissionPromptActive
 
-        binding.promptContainer.visibility = View.VISIBLE
+        if (prompt == null) return
 
         // Show title if present
-        if (!prompt.title.isNullOrEmpty()) {
+        if (viewState.showTitle) {
             binding.promptTitle.text = prompt.title
             binding.promptTitle.visibility = View.VISIBLE
         } else {
@@ -536,7 +540,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Show context if present (e.g., bash command)
-        if (!prompt.context.isNullOrEmpty()) {
+        if (viewState.showContext) {
             binding.promptContext.text = prompt.context
             binding.promptContext.visibility = View.VISIBLE
         } else {
@@ -631,8 +635,12 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 if (result) {
-                    // Hide prompt (server will send update via WebSocket)
-                    binding.promptContainer.visibility = View.GONE
+                    // Hide prompt and restore layout (server will send update via WebSocket)
+                    val restored = PermissionPromptHelper.computePostResponseState()
+                    binding.promptContainer.visibility = restored.promptContainerVisibility
+                    binding.creatureView.visibility = restored.creatureViewVisibility
+                    binding.inputBar.visibility = restored.inputBarVisibility
+                    permissionPromptActive.value = restored.permissionPromptActive
                 } else {
                     Toast.makeText(this@MainActivity, "Failed to send response", Toast.LENGTH_SHORT).show()
                 }
