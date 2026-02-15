@@ -91,6 +91,27 @@ class WakeWordServiceTest {
         assertEquals(WakeWordState.RECORDING, WakeWordService.wakeWordState.value)
     }
 
+    // --- Recording duration constant ---
+
+    @Test
+    fun `MAX_RECORDING_MS is 60 seconds`() {
+        // private const val in companion is compiled as a private static field on the outer class
+        val field = WakeWordService::class.java
+            .getDeclaredField("MAX_RECORDING_MS")
+        field.isAccessible = true
+        assertEquals(60_000L, field.getLong(null))
+    }
+
+    @Test
+    fun `MAX_RECORDING_MS matches MainActivity MAX_RECORDING_SECONDS`() {
+        val maxMs = WakeWordService::class.java
+            .getDeclaredField("MAX_RECORDING_MS")
+            .apply { isAccessible = true }
+            .getLong(null)
+        // MAX_RECORDING_SECONDS in MainActivity is 60, so MS should be 60_000
+        assertEquals(60 * 1000L, maxMs)
+    }
+
     // --- StateFlow reflects changes ---
 
     @Test

@@ -19,9 +19,7 @@ tasks.register<JacocoReport>("jacocoTestReport") {
         html.outputLocation.set(layout.buildDirectory.dir("reports/jacoco"))
     }
 
-    val kotlinClasses = fileTree(layout.buildDirectory.dir("tmp/kotlin-classes/debug")) {
-        include("**/wakeword/**")
-    }
+    val kotlinClasses = fileTree(layout.buildDirectory.dir("tmp/kotlin-classes/debug"))
     classDirectories.setFrom(kotlinClasses)
     sourceDirectories.setFrom(files("src/main/java"))
     executionData.setFrom(

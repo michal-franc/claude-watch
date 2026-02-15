@@ -1,5 +1,10 @@
 package com.claudewatch.companion.chat
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -18,6 +23,7 @@ class ChatAdapter(
     companion object {
         private const val VIEW_TYPE_USER = 0
         private const val VIEW_TYPE_CLAUDE = 1
+        private const val COPIED_INDICATOR_DURATION_MS = 1500L
     }
 
     override fun getItemViewType(position: Int): Int {
@@ -47,14 +53,32 @@ class ChatAdapter(
             holder.itemView.setOnClickListener(null)
             holder.itemView.isClickable = false
         }
+
+        // Long-press to copy message content
+        holder.itemView.setOnLongClickListener {
+            copyMessageToClipboard(it.context, message.content)
+            holder.showCopiedIndicator()
+            true
+        }
+    }
+
+    private fun copyMessageToClipboard(context: Context, text: String) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText("Chat message", text)
+        clipboard.setPrimaryClip(clip)
     }
 
     class MessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val messageText: TextView = itemView.findViewById(R.id.messageText)
         private val statusIndicator: TextView? = itemView.findViewById(R.id.statusIndicator)
+        private val copiedIndicator: TextView? = itemView.findViewById(R.id.copiedIndicator)
+        private val handler = Handler(Looper.getMainLooper())
 
         fun bind(message: ChatMessage) {
             messageText.text = message.content
+
+            // Reset copied indicator
+            copiedIndicator?.visibility = View.GONE
 
             // Apply visual styling based on status
             when (message.status) {
@@ -72,6 +96,16 @@ class ChatAdapter(
                     statusIndicator?.visibility = View.VISIBLE
                     statusIndicator?.text = "Tap to retry"
                 }
+            }
+        }
+
+        fun showCopiedIndicator() {
+            copiedIndicator?.let { indicator ->
+                indicator.visibility = View.VISIBLE
+                handler.removeCallbacksAndMessages(null)
+                handler.postDelayed({
+                    indicator.visibility = View.GONE
+                }, COPIED_INDICATOR_DURATION_MS)
             }
         }
     }

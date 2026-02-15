@@ -47,7 +47,7 @@ class WakeWordService : Service() {
         private const val SILENCE_THRESHOLD = 800
         private const val SILENCE_DURATION_MS = 1500L
         private const val GRACE_PERIOD_MS = 500L
-        private const val MAX_RECORDING_MS = 30_000L
+        private const val MAX_RECORDING_MS = 60_000L
         private const val AMPLITUDE_POLL_MS = 200L
 
         private val _wakeWordState = MutableStateFlow(WakeWordState.IDLE)

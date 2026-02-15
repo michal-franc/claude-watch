@@ -20,7 +20,8 @@
         android:paddingBottom="10dp"
         android:textColor="@color/chat_text_light"
         android:textSize="15sp"
-        android:lineSpacingMultiplier="1.2" />
+        android:lineSpacingMultiplier="1.2"
+        android:textIsSelectable="true" />
 
     <TextView
         android:id="@+id/statusIndicator"
@@ -29,6 +30,18 @@
         android:layout_marginTop="2dp"
         android:layout_marginEnd="4dp"
         android:textColor="#F44336"
+        android:textSize="11sp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/copiedIndicator"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end"
+        android:layout_marginTop="2dp"
+        android:layout_marginEnd="4dp"
+        android:text="@string/copied"
+        android:textColor="@color/status_connected"
         android:textSize="11sp"
         android:visibility="gone" />
 
