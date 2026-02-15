@@ -27,6 +27,7 @@ class WakeWordActivity : AppCompatActivity() {
 
     private lateinit var creatureView: CreatureView
     private lateinit var statusText: TextView
+    private lateinit var countdownText: TextView
     private lateinit var audioWave: AudioWaveView
     private lateinit var keyguardManager: KeyguardManager
     private val timeoutHandler = Handler(Looper.getMainLooper())
@@ -59,6 +60,7 @@ class WakeWordActivity : AppCompatActivity() {
 
         creatureView = findViewById(R.id.creature_view)
         statusText = findViewById(R.id.status_text)
+        countdownText = findViewById(R.id.countdown_text)
         audioWave = findViewById(R.id.audio_wave)
 
         // Tap anywhere to stop recording and send immediately
@@ -80,11 +82,13 @@ class WakeWordActivity : AppCompatActivity() {
                         creatureView.setState(CreatureState.LISTENING)
                         statusText.text = getString(R.string.wake_word_listening)
                         audioWave.visibility = View.VISIBLE
+                        countdownText.visibility = View.VISIBLE
                     }
                     WakeWordState.SENDING -> {
                         creatureView.setState(CreatureState.THINKING)
                         statusText.text = getString(R.string.wake_word_sending)
                         audioWave.visibility = View.GONE
+                        countdownText.visibility = View.GONE
                     }
                     WakeWordState.DONE -> {
                         Log.i(TAG, "DONE received, keyguardLocked=${keyguardManager.isKeyguardLocked}")
@@ -111,6 +115,13 @@ class WakeWordActivity : AppCompatActivity() {
         lifecycleScope.launch {
             WakeWordService.amplitude.collect { amp ->
                 audioWave.setAmplitude(amp)
+            }
+        }
+
+        // Observe countdown for recording time remaining
+        lifecycleScope.launch {
+            WakeWordService.secondsRemaining.collect { seconds ->
+                countdownText.text = getString(R.string.recording_countdown, seconds)
             }
         }
 

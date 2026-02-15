@@ -25,6 +25,7 @@ class WakeWordServiceTest {
     @After
     fun teardown() {
         setState(WakeWordState.IDLE)
+        setSecondsRemaining(60)
     }
 
     // --- WakeWordState enum ---
@@ -57,6 +58,11 @@ class WakeWordServiceTest {
     @Test
     fun `initial amplitude is zero`() {
         assertEquals(0f, WakeWordService.amplitude.value)
+    }
+
+    @Test
+    fun `initial secondsRemaining is 60`() {
+        assertEquals(60, WakeWordService.secondsRemaining.value)
     }
 
     // --- requestStopRecording state guard ---
@@ -126,11 +132,40 @@ class WakeWordServiceTest {
         assertEquals(WakeWordState.DONE, WakeWordService.wakeWordState.value)
     }
 
+    // --- secondsRemaining flow ---
+
+    @Test
+    fun `secondsRemaining flow reflects changes`() {
+        setSecondsRemaining(45)
+        assertEquals(45, WakeWordService.secondsRemaining.value)
+
+        setSecondsRemaining(0)
+        assertEquals(0, WakeWordService.secondsRemaining.value)
+    }
+
+    @Test
+    fun `secondsRemaining resets to 60 after being changed`() {
+        setSecondsRemaining(10)
+        assertEquals(10, WakeWordService.secondsRemaining.value)
+
+        setSecondsRemaining(60)
+        assertEquals(60, WakeWordService.secondsRemaining.value)
+    }
+
     // --- Helper ---
 
     @Suppress("UNCHECKED_CAST")
     private fun setState(state: WakeWordState) {
         val stateFlow = stateField.get(null) as MutableStateFlow<WakeWordState>
         stateFlow.value = state
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun setSecondsRemaining(seconds: Int) {
+        val field = WakeWordService::class.java
+            .getDeclaredField("_secondsRemaining")
+        field.isAccessible = true
+        val flow = field.get(null) as MutableStateFlow<Int>
+        flow.value = seconds
     }
 }

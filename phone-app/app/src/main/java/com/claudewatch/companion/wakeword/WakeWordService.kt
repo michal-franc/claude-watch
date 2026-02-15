@@ -59,6 +59,9 @@ class WakeWordService : Service() {
         private val _amplitude = MutableStateFlow(0f)
         val amplitude = _amplitude.asStateFlow()
 
+        private val _secondsRemaining = MutableStateFlow((MAX_RECORDING_MS / 1000).toInt())
+        val secondsRemaining = _secondsRemaining.asStateFlow()
+
         /** Result of attempting to start the wake word service. */
         enum class StartResult { OK, NO_MIC_PERMISSION, NO_ACCESS_KEY, NO_OVERLAY_PERMISSION }
 
@@ -271,6 +274,7 @@ class WakeWordService : Service() {
     }
 
     private fun startRecording() {
+        _secondsRemaining.value = (MAX_RECORDING_MS / 1000).toInt()
         try {
             audioFile = File.createTempFile("wakeword_", ".m4a", cacheDir)
 
@@ -317,6 +321,8 @@ class WakeWordService : Service() {
                 // maxAmplitude can go up to ~32767, but speech is typically 1000-10000
                 val normalizedAmplitude = (amplitude / 10000f).coerceIn(0f, 1f)
                 _amplitude.value = normalizedAmplitude
+
+                _secondsRemaining.value = ((MAX_RECORDING_MS - elapsed) / 1000).toInt().coerceAtLeast(0)
 
                 if (amplitude < SILENCE_THRESHOLD) {
                     if (silenceStart == 0L) {
@@ -402,6 +408,7 @@ class WakeWordService : Service() {
     }
 
     private fun restartPorcupine() {
+        _secondsRemaining.value = (MAX_RECORDING_MS / 1000).toInt()
         updateNotification("Listening for wake word...")
         startPorcupine()
         // Delay setting IDLE to give activity time to observe DONE and finish
