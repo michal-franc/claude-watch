@@ -3,11 +3,500 @@ package com.claudewatch.companion.network
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
+import org.junit.Before
 import org.junit.Test
+import java.lang.reflect.Method
 
 class WebSocketClientTest {
 
-    // Data class tests
+    private lateinit var client: WebSocketClient
+    private lateinit var handleMessage: Method
+
+    @Before
+    fun setUp() {
+        client = WebSocketClient("localhost:5567")
+        handleMessage = WebSocketClient::class.java.getDeclaredMethod("handleMessage", String::class.java)
+        handleMessage.isAccessible = true
+    }
+
+    private fun invokeHandleMessage(json: String) {
+        handleMessage.invoke(client, json)
+    }
+
+    // --- handleMessage integration tests ---
+
+    @Test
+    fun `handleMessage state sets claudeState status to thinking`() {
+        val json = JSONObject().apply {
+            put("type", "state")
+            put("status", "thinking")
+            put("request_id", "req-100")
+        }.toString()
+
+        invokeHandleMessage(json)
+
+        assertEquals("thinking", client.claudeState.value.status)
+        assertEquals("req-100", client.claudeState.value.requestId)
+    }
+
+    @Test
+    fun `handleMessage state idle clears currentTool`() {
+        // First set a tool via thinking + tool
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "state")
+            put("status", "thinking")
+        }.toString())
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "tool")
+            put("tool", "Bash")
+        }.toString())
+        assertEquals("Bash", client.claudeState.value.currentTool)
+
+        // Now transition to idle -- should clear tool
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "state")
+            put("status", "idle")
+        }.toString())
+
+        assertEquals("idle", client.claudeState.value.status)
+        assertNull(client.claudeState.value.currentTool)
+    }
+
+    @Test
+    fun `handleMessage state thinking preserves currentTool`() {
+        // Set tool
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "state")
+            put("status", "thinking")
+        }.toString())
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "tool")
+            put("tool", "Read")
+        }.toString())
+        assertEquals("Read", client.claudeState.value.currentTool)
+
+        // Another thinking state -- should keep tool
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "state")
+            put("status", "thinking")
+            put("request_id", "req-200")
+        }.toString())
+
+        assertEquals("thinking", client.claudeState.value.status)
+        assertEquals("Read", client.claudeState.value.currentTool)
+    }
+
+    @Test
+    fun `handleMessage state speaking clears currentTool`() {
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "state")
+            put("status", "thinking")
+        }.toString())
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "tool")
+            put("tool", "Write")
+        }.toString())
+
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "state")
+            put("status", "speaking")
+        }.toString())
+
+        assertEquals("speaking", client.claudeState.value.status)
+        assertNull(client.claudeState.value.currentTool)
+    }
+
+    @Test
+    fun `handleMessage tool sets currentTool on claudeState`() {
+        val json = JSONObject().apply {
+            put("type", "tool")
+            put("tool", "Bash")
+        }.toString()
+
+        invokeHandleMessage(json)
+
+        assertEquals("Bash", client.claudeState.value.currentTool)
+    }
+
+    @Test
+    fun `handleMessage tool with empty name does not update currentTool`() {
+        // Set initial tool
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "tool")
+            put("tool", "Bash")
+        }.toString())
+        assertEquals("Bash", client.claudeState.value.currentTool)
+
+        // Empty tool name should not change it
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "tool")
+            put("tool", "")
+        }.toString())
+
+        assertEquals("Bash", client.claudeState.value.currentTool)
+    }
+
+    @Test
+    fun `handleMessage tool updates currentTool to new tool`() {
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "tool")
+            put("tool", "Bash")
+        }.toString())
+        assertEquals("Bash", client.claudeState.value.currentTool)
+
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "tool")
+            put("tool", "Read")
+        }.toString())
+        assertEquals("Read", client.claudeState.value.currentTool)
+    }
+
+    @Test
+    fun `handleMessage chat adds message to chatMessages`() {
+        val json = JSONObject().apply {
+            put("type", "chat")
+            put("role", "assistant")
+            put("content", "Hello!")
+            put("timestamp", "2024-01-01T12:00:00Z")
+        }.toString()
+
+        invokeHandleMessage(json)
+
+        val messages = client.chatMessages.value
+        assertEquals(1, messages.size)
+        assertEquals("assistant", messages[0].role)
+        assertEquals("Hello!", messages[0].content)
+    }
+
+    @Test
+    fun `handleMessage chat accumulates messages`() {
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "chat")
+            put("role", "user")
+            put("content", "Hi")
+            put("timestamp", "t1")
+        }.toString())
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "chat")
+            put("role", "assistant")
+            put("content", "Hello!")
+            put("timestamp", "t2")
+        }.toString())
+
+        assertEquals(2, client.chatMessages.value.size)
+    }
+
+    @Test
+    fun `handleMessage history replaces chatMessages`() {
+        // Add a chat message first
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "chat")
+            put("role", "user")
+            put("content", "Old message")
+            put("timestamp", "t0")
+        }.toString())
+        assertEquals(1, client.chatMessages.value.size)
+
+        // History replaces
+        val messagesArray = JSONArray().apply {
+            put(JSONObject().apply {
+                put("role", "user")
+                put("content", "First")
+                put("timestamp", "t1")
+            })
+            put(JSONObject().apply {
+                put("role", "assistant")
+                put("content", "Second")
+                put("timestamp", "t2")
+            })
+        }
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "history")
+            put("messages", messagesArray)
+        }.toString())
+
+        val messages = client.chatMessages.value
+        assertEquals(2, messages.size)
+        assertEquals("First", messages[0].content)
+        assertEquals("Second", messages[1].content)
+    }
+
+    @Test
+    fun `handleMessage history with empty array clears messages`() {
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "chat")
+            put("role", "user")
+            put("content", "Hi")
+            put("timestamp", "t1")
+        }.toString())
+
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "history")
+            put("messages", JSONArray())
+        }.toString())
+
+        assertEquals(0, client.chatMessages.value.size)
+    }
+
+    @Test
+    fun `handleMessage prompt sets currentPrompt`() {
+        val optionsArray = JSONArray().apply {
+            put(JSONObject().apply {
+                put("num", 1)
+                put("label", "Yes")
+                put("description", "Proceed")
+                put("selected", false)
+            })
+        }
+        val promptJson = JSONObject().apply {
+            put("question", "Continue?")
+            put("options", optionsArray)
+            put("timestamp", "t1")
+        }
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "prompt")
+            put("prompt", promptJson)
+        }.toString())
+
+        val prompt = client.currentPrompt.value
+        assertNotNull(prompt)
+        assertEquals("Continue?", prompt!!.question)
+        assertEquals(1, prompt.options.size)
+        assertEquals("Yes", prompt.options[0].label)
+        assertFalse(prompt.isPermission)
+    }
+
+    @Test
+    fun `handleMessage prompt with null prompt object clears currentPrompt`() {
+        // Set a prompt first
+        val promptJson = JSONObject().apply {
+            put("question", "Q?")
+            put("options", JSONArray())
+            put("timestamp", "t1")
+        }
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "prompt")
+            put("prompt", promptJson)
+        }.toString())
+        assertNotNull(client.currentPrompt.value)
+
+        // Send prompt without "prompt" key
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "prompt")
+        }.toString())
+
+        assertNull(client.currentPrompt.value)
+    }
+
+    @Test
+    fun `handleMessage permission sets currentPrompt with isPermission true`() {
+        val optionsArray = JSONArray().apply {
+            put(JSONObject().apply {
+                put("num", 1)
+                put("label", "Allow")
+                put("description", "Allow it")
+            })
+            put(JSONObject().apply {
+                put("num", 2)
+                put("label", "Deny")
+                put("description", "Deny it")
+            })
+        }
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "permission")
+            put("question", "Allow Bash?")
+            put("options", optionsArray)
+            put("tool_name", "Bash")
+            put("context", "rm -rf /tmp")
+            put("request_id", "perm-1")
+        }.toString())
+
+        val prompt = client.currentPrompt.value
+        assertNotNull(prompt)
+        assertTrue(prompt!!.isPermission)
+        assertEquals("Allow Bash?", prompt.question)
+        assertEquals("Bash", prompt.toolName)
+        assertEquals("rm -rf /tmp", prompt.context)
+        assertEquals("perm-1", prompt.requestId)
+        assertEquals(2, prompt.options.size)
+    }
+
+    @Test
+    fun `handleMessage permission_resolved clears matching prompt`() {
+        // Set permission prompt
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "permission")
+            put("question", "Allow?")
+            put("options", JSONArray())
+            put("tool_name", "Bash")
+            put("context", "ls")
+            put("request_id", "perm-42")
+        }.toString())
+        assertNotNull(client.currentPrompt.value)
+
+        // Resolve it
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "permission_resolved")
+            put("request_id", "perm-42")
+        }.toString())
+
+        assertNull(client.currentPrompt.value)
+    }
+
+    @Test
+    fun `handleMessage permission_resolved does not clear non-matching prompt`() {
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "permission")
+            put("question", "Allow?")
+            put("options", JSONArray())
+            put("tool_name", "Bash")
+            put("context", "ls")
+            put("request_id", "perm-42")
+        }.toString())
+
+        // Resolve different request_id
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "permission_resolved")
+            put("request_id", "perm-99")
+        }.toString())
+
+        assertNotNull(client.currentPrompt.value)
+    }
+
+    @Test
+    fun `handleMessage usage sets contextUsage`() {
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "usage")
+            put("total_context", 50000)
+            put("context_window", 200000)
+            put("context_percent", 25.0)
+            put("cost_usd", 0.10)
+        }.toString())
+
+        val usage = client.contextUsage.value
+        assertEquals(50000, usage.totalContext)
+        assertEquals(200000, usage.contextWindow)
+        assertEquals(25.0f, usage.contextPercent)
+        assertEquals(0.10f, usage.costUsd, 0.001f)
+    }
+
+    @Test
+    fun `handleMessage unknown type does not crash`() {
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "future_type")
+            put("data", "whatever")
+        }.toString())
+
+        // Should not throw; state should remain default
+        assertEquals("idle", client.claudeState.value.status)
+    }
+
+    @Test
+    fun `handleMessage malformed JSON does not crash`() {
+        invokeHandleMessage("this is not json {{{")
+
+        // Should not throw
+        assertEquals("idle", client.claudeState.value.status)
+    }
+
+    @Test
+    fun `handleMessage state with empty request_id sets null`() {
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "state")
+            put("status", "thinking")
+            put("request_id", "")
+        }.toString())
+
+        assertEquals("thinking", client.claudeState.value.status)
+        assertNull(client.claudeState.value.requestId)
+    }
+
+    // --- Full agent status lifecycle test ---
+
+    @Test
+    fun `full lifecycle - thinking then tool then idle`() {
+        // Start thinking
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "state")
+            put("status", "thinking")
+            put("request_id", "req-1")
+        }.toString())
+        assertEquals("thinking", client.claudeState.value.status)
+        assertNull(client.claudeState.value.currentTool)
+
+        // Tool used
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "tool")
+            put("tool", "Bash")
+        }.toString())
+        assertEquals("thinking", client.claudeState.value.status)
+        assertEquals("Bash", client.claudeState.value.currentTool)
+
+        // Switch tool
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "tool")
+            put("tool", "Read")
+        }.toString())
+        assertEquals("Read", client.claudeState.value.currentTool)
+
+        // Back to idle
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "state")
+            put("status", "idle")
+        }.toString())
+        assertEquals("idle", client.claudeState.value.status)
+        assertNull(client.claudeState.value.currentTool)
+    }
+
+    // --- WebSocket lifecycle tests ---
+
+    @Test
+    fun `disconnect sets status to disconnected`() {
+        client.disconnect()
+        assertEquals(ConnectionStatus.DISCONNECTED, client.connectionStatus.value)
+    }
+
+    @Test
+    fun `destroy sets status to disconnected`() {
+        client.destroy()
+        assertEquals(ConnectionStatus.DISCONNECTED, client.connectionStatus.value)
+    }
+
+    @Test
+    fun `connectionStatus starts as disconnected`() {
+        assertEquals(ConnectionStatus.DISCONNECTED, client.connectionStatus.value)
+    }
+
+    @Test
+    fun `prompt with title and context sets fields`() {
+        val optionsArray = JSONArray().apply {
+            put(JSONObject().apply {
+                put("num", 1)
+                put("label", "OK")
+                put("description", "Accept")
+                put("selected", true)
+            })
+        }
+        val promptJson = JSONObject().apply {
+            put("question", "Allow?")
+            put("options", optionsArray)
+            put("timestamp", "t1")
+            put("title", "Permission")
+            put("context", "Some context")
+        }
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "prompt")
+            put("prompt", promptJson)
+        }.toString())
+
+        val prompt = client.currentPrompt.value
+        assertNotNull(prompt)
+        assertEquals("Permission", prompt!!.title)
+        assertEquals("Some context", prompt.context)
+    }
+
+    // --- Data class tests (original) ---
+
     @Test
     fun `ChatMessage has correct default values`() {
         val message = ChatMessage(

@@ -21,6 +21,14 @@ tasks.register<JacocoReport>("jacocoTestReport") {
 
     val kotlinClasses = fileTree(layout.buildDirectory.dir("tmp/kotlin-classes/debug")) {
         include("**/wakeword/**")
+        include("**/network/WebSocketClient*.class")
+        include("**/network/ChatMessage*.class")
+        include("**/network/ClaudeState*.class")
+        include("**/network/ContextUsage*.class")
+        include("**/network/PromptOption*.class")
+        include("**/network/ClaudePrompt*.class")
+        include("**/network/ConnectionStatus*.class")
+        include("**/network/MessageStatus*.class")
     }
     classDirectories.setFrom(kotlinClasses)
     sourceDirectories.setFrom(files("src/main/java"))
