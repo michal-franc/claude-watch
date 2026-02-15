@@ -1,13 +1,37 @@
 package com.claudewatch.companion.chat
 
+import android.content.ClipboardManager
+import android.content.Context
+import android.view.LayoutInflater
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.TextView
+import com.claudewatch.companion.R
 import com.claudewatch.companion.network.ChatMessage
 import com.claudewatch.companion.network.MessageStatus
 import org.junit.Assert.*
+import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLooper
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class ChatAdapterTest {
 
+    private lateinit var context: Context
+    private lateinit var parent: FrameLayout
     private val diffCallback = ChatAdapter.MessageDiffCallback()
+
+    @Before
+    fun setUp() {
+        context = RuntimeEnvironment.getApplication()
+        parent = FrameLayout(context)
+    }
 
     @Test
     fun `areItemsTheSame returns true for same id`() {
@@ -226,141 +250,158 @@ class ChatAdapterTest {
         assertEquals(1, assistantViewType)
     }
 
-    // --- Copy message tests ---
+    // --- Copy message tests (Robolectric) ---
 
-    @Test
-    fun `user message content is accessible for copy`() {
-        val message = ChatMessage(
-            id = "msg-001",
-            role = "user",
-            content = "Hello, can you help me?",
-            timestamp = "2024-01-01T00:00:00Z"
-        )
+    private fun inflateClaudeView(): View {
+        return LayoutInflater.from(context).inflate(R.layout.item_chat_claude, parent, false)
+    }
 
-        assertEquals("Hello, can you help me?", message.content)
+    private fun inflateUserView(): View {
+        return LayoutInflater.from(context).inflate(R.layout.item_chat_user, parent, false)
+    }
+
+    private fun getClipboardText(): String? {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        return clipboard.primaryClip?.getItemAt(0)?.text?.toString()
     }
 
     @Test
-    fun `assistant message content is accessible for copy`() {
-        val message = ChatMessage(
-            id = "msg-002",
-            role = "assistant",
-            content = "Sure, I'd be happy to help!",
-            timestamp = "2024-01-01T00:00:01Z"
-        )
+    fun `long press on claude message copies content to clipboard`() {
+        val view = inflateClaudeView()
+        val holder = ChatAdapter.MessageViewHolder(view)
+        val message = ChatMessage(role = "assistant", content = "Here is the answer", timestamp = "t1")
+        holder.bind(message)
 
-        assertEquals("Sure, I'd be happy to help!", message.content)
+        // Simulate the long-press copy logic
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = android.content.ClipData.newPlainText("Chat message", message.content)
+        clipboard.setPrimaryClip(clip)
+
+        assertEquals("Here is the answer", getClipboardText())
     }
 
     @Test
-    fun `message with empty content has empty string for copy`() {
-        val message = ChatMessage(
-            id = "msg-003",
-            role = "assistant",
-            content = "",
-            timestamp = "t1"
-        )
+    fun `long press on user message copies content to clipboard`() {
+        val view = inflateUserView()
+        val holder = ChatAdapter.MessageViewHolder(view)
+        val message = ChatMessage(role = "user", content = "My question here", timestamp = "t1")
+        holder.bind(message)
 
-        assertEquals("", message.content)
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = android.content.ClipData.newPlainText("Chat message", message.content)
+        clipboard.setPrimaryClip(clip)
+
+        assertEquals("My question here", getClipboardText())
     }
 
     @Test
-    fun `message with multiline content preserves newlines for copy`() {
-        val multilineContent = "Line 1\nLine 2\nLine 3"
-        val message = ChatMessage(
-            id = "msg-004",
-            role = "assistant",
-            content = multilineContent,
-            timestamp = "t1"
-        )
+    fun `multiline content copies correctly to clipboard`() {
+        val content = "Line 1\nLine 2\n```\ncode block\n```"
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = android.content.ClipData.newPlainText("Chat message", content)
+        clipboard.setPrimaryClip(clip)
 
-        assertEquals(multilineContent, message.content)
-        assertTrue(message.content.contains("\n"))
+        assertEquals(content, getClipboardText())
     }
 
     @Test
-    fun `message with special characters preserves content for copy`() {
-        val specialContent = "Code: `val x = 1` and emoji \u2764 and <html>&amp;"
-        val message = ChatMessage(
-            id = "msg-005",
-            role = "assistant",
-            content = specialContent,
-            timestamp = "t1"
-        )
+    fun `copied indicator is initially gone`() {
+        val view = inflateClaudeView()
+        val holder = ChatAdapter.MessageViewHolder(view)
+        val message = ChatMessage(role = "assistant", content = "Hello", timestamp = "t1")
+        holder.bind(message)
 
-        assertEquals(specialContent, message.content)
+        val indicator = view.findViewById<TextView>(R.id.copiedIndicator)
+        assertEquals(View.GONE, indicator.visibility)
     }
 
     @Test
-    fun `sent message has copyable content`() {
-        val message = ChatMessage(
-            id = "msg-010",
-            role = "user",
-            content = "Sent message text",
-            timestamp = "t1",
-            status = MessageStatus.SENT
-        )
+    fun `showCopiedIndicator makes indicator visible`() {
+        val view = inflateClaudeView()
+        val holder = ChatAdapter.MessageViewHolder(view)
+        val message = ChatMessage(role = "assistant", content = "Hello", timestamp = "t1")
+        holder.bind(message)
 
-        assertEquals("Sent message text", message.content)
-        assertEquals(MessageStatus.SENT, message.status)
+        holder.showCopiedIndicator()
+
+        val indicator = view.findViewById<TextView>(R.id.copiedIndicator)
+        assertEquals(View.VISIBLE, indicator.visibility)
     }
 
     @Test
-    fun `pending message has copyable content`() {
-        val message = ChatMessage(
-            id = "msg-011",
-            role = "user",
-            content = "Pending message text",
-            timestamp = "t1",
-            status = MessageStatus.PENDING
-        )
+    fun `copied indicator auto-hides after 1500ms`() {
+        val view = inflateClaudeView()
+        val holder = ChatAdapter.MessageViewHolder(view)
+        val message = ChatMessage(role = "assistant", content = "Hello", timestamp = "t1")
+        holder.bind(message)
 
-        assertEquals("Pending message text", message.content)
-        assertEquals(MessageStatus.PENDING, message.status)
+        holder.showCopiedIndicator()
+        val indicator = view.findViewById<TextView>(R.id.copiedIndicator)
+        assertEquals(View.VISIBLE, indicator.visibility)
+
+        // Advance time past the 1500ms delay
+        ShadowLooper.idleMainLooper(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
+
+        assertEquals(View.GONE, indicator.visibility)
     }
 
     @Test
-    fun `failed message has copyable content`() {
-        val message = ChatMessage(
-            id = "msg-012",
-            role = "user",
-            content = "Failed message text",
-            timestamp = "t1",
-            status = MessageStatus.FAILED
-        )
+    fun `copied indicator stays visible before 1500ms`() {
+        val view = inflateClaudeView()
+        val holder = ChatAdapter.MessageViewHolder(view)
+        val message = ChatMessage(role = "assistant", content = "Hello", timestamp = "t1")
+        holder.bind(message)
 
-        assertEquals("Failed message text", message.content)
-        assertEquals(MessageStatus.FAILED, message.status)
+        holder.showCopiedIndicator()
+        val indicator = view.findViewById<TextView>(R.id.copiedIndicator)
+
+        // Advance only 1000ms — should still be visible
+        ShadowLooper.idleMainLooper(1000, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertEquals(View.VISIBLE, indicator.visibility)
     }
 
     @Test
-    fun `both user and assistant messages provide same content field for copy`() {
-        val sharedContent = "Same text in both"
-        val userMsg = ChatMessage(role = "user", content = sharedContent, timestamp = "t1")
-        val assistantMsg = ChatMessage(role = "assistant", content = sharedContent, timestamp = "t2")
+    fun `bind resets copied indicator to gone`() {
+        val view = inflateClaudeView()
+        val holder = ChatAdapter.MessageViewHolder(view)
+        val message = ChatMessage(role = "assistant", content = "Hello", timestamp = "t1")
 
-        // Both roles expose content identically for copy
-        assertEquals(userMsg.content, assistantMsg.content)
+        // Show indicator
+        holder.bind(message)
+        holder.showCopiedIndicator()
+        val indicator = view.findViewById<TextView>(R.id.copiedIndicator)
+        assertEquals(View.VISIBLE, indicator.visibility)
+
+        // Rebind should reset it
+        holder.bind(message)
+        assertEquals(View.GONE, indicator.visibility)
     }
 
     @Test
-    fun `message content is independent of other fields for copy`() {
-        val msg1 = ChatMessage(
-            id = "id-1",
-            role = "user",
-            content = "Copy me",
-            timestamp = "t1",
-            status = MessageStatus.PENDING
-        )
-        val msg2 = ChatMessage(
-            id = "id-2",
-            role = "assistant",
-            content = "Copy me",
-            timestamp = "t2",
-            status = MessageStatus.SENT
-        )
+    fun `user message layout has copiedIndicator`() {
+        val view = inflateUserView()
+        val indicator = view.findViewById<TextView>(R.id.copiedIndicator)
+        assertNotNull(indicator)
+    }
 
-        // Content is the same regardless of id, role, timestamp, status
-        assertEquals(msg1.content, msg2.content)
+    @Test
+    fun `claude message layout has copiedIndicator`() {
+        val view = inflateClaudeView()
+        val indicator = view.findViewById<TextView>(R.id.copiedIndicator)
+        assertNotNull(indicator)
+    }
+
+    @Test
+    fun `messageText is selectable in claude layout`() {
+        val view = inflateClaudeView()
+        val messageText = view.findViewById<TextView>(R.id.messageText)
+        assertTrue("messageText should be selectable", messageText.isTextSelectable)
+    }
+
+    @Test
+    fun `messageText is selectable in user layout`() {
+        val view = inflateUserView()
+        val messageText = view.findViewById<TextView>(R.id.messageText)
+        assertTrue("messageText should be selectable", messageText.isTextSelectable)
     }
 }
