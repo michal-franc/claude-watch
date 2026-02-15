@@ -58,7 +58,8 @@ Always add unit tests for new features and bug fixes. Write tests that verify **
 - **Python server**: Use pytest with mocks for `claude_wrapper.py` and `server.py`.
 - **Don't write trivial tests** like checking data class field access — test actual behavior: state changes, visibility toggling, clipboard writes, timer callbacks, flow emissions.
 - **Always check test coverage** after adding tests — run `make coverage` and review the reports. Python: `htmlcov/index.html`, Watch: `watch-app/app/build/reports/jacoco/index.html`, Phone: `phone-app/app/build/reports/jacoco/index.html`.
-- **Minimum 75% coverage** — all new and modified code must maintain at least 75% test coverage. Run `make coverage` before pushing and verify the numbers. If coverage drops below 75%, add more tests before opening a PR.
+- **Minimum 75% coverage on JaCoCo-measurable code** — pure logic, data classes, network clients, services. Run `make coverage` before pushing. If below 75%, extract logic into testable helpers (see `PermissionPromptHelper` pattern).
+- **Robolectric-tested code is exempt from the 75% metric** — JaCoCo can't measure Robolectric coverage due to classloader conflicts. UI code (Activities, Views, Adapters) must still have Robolectric tests but won't show in JaCoCo reports. Report Robolectric test count separately in PR descriptions.
 
 ## Don't
 
