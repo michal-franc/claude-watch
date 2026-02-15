@@ -16,4 +16,5 @@
     <string name="connecting">Connecting...</string>
     <string name="wake_word_listening">Listening…</string>
     <string name="wake_word_sending">Sending…</string>
+    <string name="copied">Copied!</string>
 </resources>
