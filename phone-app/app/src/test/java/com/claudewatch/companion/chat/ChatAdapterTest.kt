@@ -392,16 +392,16 @@ class ChatAdapterTest {
     }
 
     @Test
-    fun `messageText is selectable in claude layout`() {
+    fun `messageText is not selectable - long press copies full message instead`() {
         val view = inflateClaudeView()
         val messageText = view.findViewById<TextView>(R.id.messageText)
-        assertTrue("messageText should be selectable", messageText.isTextSelectable)
+        assertFalse("messageText should not be selectable (long-press copies full text)", messageText.isTextSelectable)
     }
 
     @Test
-    fun `messageText is selectable in user layout`() {
+    fun `messageText is not selectable in user layout - long press copies full message instead`() {
         val view = inflateUserView()
         val messageText = view.findViewById<TextView>(R.id.messageText)
-        assertTrue("messageText should be selectable", messageText.isTextSelectable)
+        assertFalse("messageText should not be selectable (long-press copies full text)", messageText.isTextSelectable)
     }
 }
