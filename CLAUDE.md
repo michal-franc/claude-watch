@@ -47,6 +47,7 @@ When spawning subagents (via Task tool) that write code:
 - **Each subagent gets its own worktree** — create a worktree + feature branch before doing any work.
 - **Never push to master** — subagents push only to their feature branch.
 - **All changes go through a PR** — subagent must create a PR for review before anything is merged.
+- **PR description must include test summary** — report: number of tests added, test types (Robolectric, JUnit, pytest), coverage percentage on changed files, and whether the 75% minimum is met.
 
 ## Testing
 
