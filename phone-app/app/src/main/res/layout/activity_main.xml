@@ -104,6 +104,35 @@
         android:layout_height="1dp"
         android:background="@color/background_surface" />
 
+    <!-- Recording Status Bar -->
+    <LinearLayout
+        android:id="@+id/recordingStatusBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="6dp"
+        android:background="@color/recording_status_bg"
+        android:visibility="gone">
+
+        <View
+            android:id="@+id/recordingDot"
+            android:layout_width="12dp"
+            android:layout_height="12dp"
+            android:background="@drawable/circle_recording_dot" />
+
+        <TextView
+            android:id="@+id/recordingStatusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textColor="#F44336"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+    </LinearLayout>
+
     <!-- Chat RecyclerView (60% height) -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/chatRecyclerView"

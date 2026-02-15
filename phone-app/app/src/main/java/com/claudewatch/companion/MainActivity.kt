@@ -9,9 +9,11 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.media.MediaRecorder
 import android.os.Bundle
+import android.os.CountDownTimer
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
+import android.view.animation.AnimationUtils
 import android.view.inputmethod.EditorInfo
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -57,6 +59,7 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "MainActivity"
         private const val PERMISSION_REQUEST_CODE = 1001
         private const val NOTIFICATION_PERMISSION_CODE = 1002
+        private const val RECORDING_DURATION_MS = 60_000L
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -72,6 +75,7 @@ class MainActivity : AppCompatActivity() {
     private var mediaRecorder: MediaRecorder? = null
     private var audioFile: File? = null
     private var isRecording = false
+    private var recordingTimer: CountDownTimer? = null
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -324,7 +328,8 @@ class MainActivity : AppCompatActivity() {
 
             isRecording = true
             binding.voiceButton.setBackgroundResource(R.drawable.bg_circle_button_recording)
-            Toast.makeText(this, "Recording...", Toast.LENGTH_SHORT).show()
+            showRecordingBanner()
+            startRecordingTimer()
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start recording", e)
@@ -332,7 +337,40 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showRecordingBanner() {
+        val seconds = (RECORDING_DURATION_MS / 1000).toInt()
+        binding.recordingStatusText.text = getString(R.string.recording_countdown, seconds)
+        binding.recordingStatusBar.visibility = View.VISIBLE
+        val pulse = AnimationUtils.loadAnimation(this, R.anim.pulse)
+        binding.recordingDot.startAnimation(pulse)
+    }
+
+    private fun hideRecordingBanner() {
+        binding.recordingDot.clearAnimation()
+        binding.recordingStatusBar.visibility = View.GONE
+    }
+
+    private fun startRecordingTimer() {
+        recordingTimer?.cancel()
+        recordingTimer = object : CountDownTimer(RECORDING_DURATION_MS, 1000) {
+            override fun onTick(millisUntilFinished: Long) {
+                val secondsLeft = (millisUntilFinished / 1000).toInt()
+                binding.recordingStatusText.text = getString(R.string.recording_countdown, secondsLeft)
+            }
+
+            override fun onFinish() {
+                if (isRecording) {
+                    stopRecordingAndSend()
+                }
+            }
+        }.start()
+    }
+
     private fun stopRecordingAndSend() {
+        recordingTimer?.cancel()
+        recordingTimer = null
+        hideRecordingBanner()
+
         try {
             mediaRecorder?.apply {
                 stop()
@@ -674,6 +712,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        recordingTimer?.cancel()
         mediaRecorder?.release()
         webSocketClient?.destroy()
         httpClient.dispatcher.executorService.shutdown()
