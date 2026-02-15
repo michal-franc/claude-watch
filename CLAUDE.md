@@ -47,6 +47,15 @@ When spawning subagents (via Task tool) that write code:
 - **Never push to master** — subagents push only to their feature branch.
 - **All changes go through a PR** — subagent must create a PR for review before anything is merged.
 
+## Testing
+
+Always add unit tests for new features and bug fixes. Write tests that verify **real behavior**, not just data class field access.
+
+- **Phone app**: Use Robolectric (`@RunWith(RobolectricTestRunner::class)`) for tests that touch Android APIs (clipboard, views, handlers). Use `ShadowLooper` for timer/delay assertions.
+- **Watch/phone pure logic**: Extract algorithms into testable helper classes (see `RecordingTimerLogic` pattern) and test with plain JUnit.
+- **Python server**: Use pytest with mocks for `claude_wrapper.py` and `server.py`.
+- **Don't write trivial tests** like checking data class field access — test actual behavior: state changes, visibility toggling, clipboard writes, timer callbacks, flow emissions.
+
 ## Don't
 
 - Don't push directly to master — always use a feature branch + PR
