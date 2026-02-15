@@ -71,8 +71,8 @@ class WakeWordActivity : AppCompatActivity() {
             }
         }
 
-        // Safety timeout
-        timeoutHandler.postDelayed(timeoutRunnable, 35_000L)
+        // Safety timeout — must exceed MAX_RECORDING_MS (60s) + time for SENDING/DONE
+        timeoutHandler.postDelayed(timeoutRunnable, 65_000L)
 
         lifecycleScope.launch {
             WakeWordService.wakeWordState.collect { state ->
