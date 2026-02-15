@@ -60,7 +60,7 @@ class WakeWordService : Service() {
         val amplitude = _amplitude.asStateFlow()
 
         /** Result of attempting to start the wake word service. */
-        enum class StartResult { OK, NO_MIC_PERMISSION, NO_ACCESS_KEY }
+        enum class StartResult { OK, NO_MIC_PERMISSION, NO_ACCESS_KEY, NO_OVERLAY_PERMISSION }
 
         fun start(context: Context): StartResult {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
@@ -72,9 +72,16 @@ class WakeWordService : Service() {
                 Log.w(TAG, "Porcupine access key not configured")
                 return StartResult.NO_ACCESS_KEY
             }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
+                Log.w(TAG, "SYSTEM_ALERT_WINDOW not granted, wake word overlay won't show over lock screen")
+            }
             val intent = Intent(context, WakeWordService::class.java)
             context.startForegroundService(intent)
-            return StartResult.OK
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
+                StartResult.NO_OVERLAY_PERMISSION
+            } else {
+                StartResult.OK
+            }
         }
 
         fun stop(context: Context) {

@@ -123,6 +123,8 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "Wake word requires microphone permission", Toast.LENGTH_LONG).show()
                 WakeWordService.Companion.StartResult.NO_ACCESS_KEY ->
                     Toast.makeText(this, "Wake word access key not configured", Toast.LENGTH_LONG).show()
+                WakeWordService.Companion.StartResult.NO_OVERLAY_PERMISSION ->
+                    Toast.makeText(this, "Enable 'Draw over other apps' for wake word on lock screen", Toast.LENGTH_LONG).show()
                 WakeWordService.Companion.StartResult.OK -> {}
             }
         }
@@ -553,6 +555,7 @@ class MainActivity : AppCompatActivity() {
         if (viewState.showContext) {
             binding.promptContext.text = prompt.context
             binding.promptContext.visibility = View.VISIBLE
+            binding.promptContext.movementMethod = android.text.method.ScrollingMovementMethod.getInstance()
         } else {
             binding.promptContext.visibility = View.GONE
         }

@@ -88,6 +88,8 @@ class SettingsActivity : AppCompatActivity() {
                     Toast.makeText(this, "Wake word requires microphone permission", Toast.LENGTH_LONG).show()
                 WakeWordService.Companion.StartResult.NO_ACCESS_KEY ->
                     Toast.makeText(this, "Wake word access key not configured", Toast.LENGTH_LONG).show()
+                WakeWordService.Companion.StartResult.NO_OVERLAY_PERMISSION ->
+                    Toast.makeText(this, "Enable 'Draw over other apps' for wake word on lock screen", Toast.LENGTH_LONG).show()
                 WakeWordService.Companion.StartResult.OK -> {}
             }
         } else {
