@@ -1,6 +1,28 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("jacoco")
+}
+
+jacoco {
+    toolVersion = "0.8.12"
+}
+
+tasks.register<JacocoReport>("jacocoTestReport") {
+    dependsOn("testDebugUnitTest")
+
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+        html.outputLocation.set(layout.buildDirectory.dir("reports/jacoco"))
+    }
+
+    val kotlinClasses = fileTree(layout.buildDirectory.dir("tmp/kotlin-classes/debug"))
+    classDirectories.setFrom(kotlinClasses)
+    sourceDirectories.setFrom(files("src/main/java"))
+    executionData.setFrom(
+        fileTree(layout.buildDirectory) { include("jacoco/testDebugUnitTest.exec") }
+    )
 }
 
 android {

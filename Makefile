@@ -1,4 +1,4 @@
-.PHONY: check lint test test-python test-watch test-phone lint-python lint-watch lint-phone daemon-install
+.PHONY: check lint test test-python test-watch test-phone lint-python lint-watch lint-phone coverage coverage-python coverage-watch coverage-phone daemon-install
 
 # Run all lints and tests (mirrors CI)
 check: lint test
@@ -9,6 +9,9 @@ lint: lint-python lint-watch lint-phone
 # All tests
 test: test-python test-watch test-phone
 
+# All coverage reports
+coverage: coverage-python coverage-watch coverage-phone
+
 # Python
 lint-python:
 	ruff check *.py
@@ -17,6 +20,9 @@ lint-python:
 test-python:
 	DEEPGRAM_API_KEY=dummy pytest
 
+coverage-python:
+	DEEPGRAM_API_KEY=dummy pytest --cov=. --cov-report=term-missing --cov-report=html:htmlcov --ignore=worktrees
+
 # Watch app
 lint-watch:
 	cd watch-app && ./gradlew lint
@@ -24,12 +30,20 @@ lint-watch:
 test-watch:
 	cd watch-app && ./gradlew test
 
+coverage-watch:
+	cd watch-app && ./gradlew jacocoTestReport
+	@echo "Watch coverage report: watch-app/app/build/reports/jacoco/index.html"
+
 # Phone app
 lint-phone:
 	cd phone-app && ./gradlew lint
 
 test-phone:
 	cd phone-app && ./gradlew test
+
+coverage-phone:
+	cd phone-app && ./gradlew jacocoTestReport
+	@echo "Phone coverage report: phone-app/app/build/reports/jacoco/index.html"
 
 daemon-install:
 	sudo systemctl daemon-reload

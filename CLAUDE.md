@@ -20,6 +20,7 @@ Voice-to-Claude pipeline: Galaxy Watch/Phone -> Server -> Deepgram -> Claude Cod
 make check          # Run all lints + tests (same as CI)
 make lint           # Just lints
 make test           # Just tests
+make coverage       # Generate coverage reports (Python + watch + phone)
 ./server.py /path   # Start server (folder arg required)
 ```
 
@@ -55,6 +56,7 @@ Always add unit tests for new features and bug fixes. Write tests that verify **
 - **Watch/phone pure logic**: Extract algorithms into testable helper classes (see `RecordingTimerLogic` pattern) and test with plain JUnit.
 - **Python server**: Use pytest with mocks for `claude_wrapper.py` and `server.py`.
 - **Don't write trivial tests** like checking data class field access — test actual behavior: state changes, visibility toggling, clipboard writes, timer callbacks, flow emissions.
+- **Always check test coverage** after adding tests — run `make coverage` and review the reports. Python: `htmlcov/index.html`, Watch: `watch-app/app/build/reports/jacoco/index.html`, Phone: `phone-app/app/build/reports/jacoco/index.html`.
 
 ## Don't
 
