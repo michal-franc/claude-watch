@@ -458,6 +458,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             webSocketClient?.claudeState?.collectLatest { state ->
                 updateCreatureState(state.status)
+                updateAgentStatus(state)
                 resetIdleTimeout()
             }
         }
@@ -669,6 +670,30 @@ class MainActivity : AppCompatActivity() {
             else -> CreatureState.IDLE
         }
         binding.creatureView.setState(creatureState)
+    }
+
+    private fun updateAgentStatus(state: com.claudewatch.companion.network.ClaudeState) {
+        when {
+            state.status == "thinking" && !state.currentTool.isNullOrEmpty() -> {
+                binding.agentStatusBar.visibility = View.VISIBLE
+                binding.agentStatusText.text = getString(R.string.agent_using_tool, state.currentTool)
+                binding.agentStatusSpinner.indeterminateTintList =
+                    android.content.res.ColorStateList.valueOf(
+                        ContextCompat.getColor(this, R.color.agent_status_tool)
+                    )
+            }
+            state.status == "thinking" -> {
+                binding.agentStatusBar.visibility = View.VISIBLE
+                binding.agentStatusText.text = getString(R.string.agent_thinking)
+                binding.agentStatusSpinner.indeterminateTintList =
+                    android.content.res.ColorStateList.valueOf(
+                        ContextCompat.getColor(this, R.color.agent_status_thinking)
+                    )
+            }
+            else -> {
+                binding.agentStatusBar.visibility = View.GONE
+            }
+        }
     }
 
     private fun resetIdleTimeout() {
