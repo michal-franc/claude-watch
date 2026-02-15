@@ -10,6 +10,7 @@
     <!-- Backward compat aliases for launcher icons etc. -->
     <color name="creature_orange_light">@color/creature_green_light</color>
     <color name="creature_orange_dark">@color/creature_green_dark</color>
+    <color name="ic_launcher_background">#1a1a2e</color>
 
     <!-- Troll horns -->
     <color name="creature_horn_base">#C8A882</color>
