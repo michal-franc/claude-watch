@@ -1,5 +1,6 @@
 package com.claudewatch.companion.wakeword
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,12 +8,14 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationCompat
 import com.claudewatch.companion.BuildConfig
 import com.claudewatch.companion.MainActivity
@@ -47,7 +50,7 @@ class WakeWordService : Service() {
         private const val SILENCE_THRESHOLD = 800
         private const val SILENCE_DURATION_MS = 1500L
         private const val GRACE_PERIOD_MS = 500L
-        private const val MAX_RECORDING_MS = 30_000L
+        private const val MAX_RECORDING_MS = 60_000L
         private const val AMPLITUDE_POLL_MS = 200L
 
         private val _wakeWordState = MutableStateFlow(WakeWordState.IDLE)
@@ -56,9 +59,29 @@ class WakeWordService : Service() {
         private val _amplitude = MutableStateFlow(0f)
         val amplitude = _amplitude.asStateFlow()
 
-        fun start(context: Context) {
+        /** Result of attempting to start the wake word service. */
+        enum class StartResult { OK, NO_MIC_PERMISSION, NO_ACCESS_KEY, NO_OVERLAY_PERMISSION }
+
+        fun start(context: Context): StartResult {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "RECORD_AUDIO not granted, skipping wake word service start")
+                return StartResult.NO_MIC_PERMISSION
+            }
+            if (BuildConfig.PORCUPINE_ACCESS_KEY.isBlank()) {
+                Log.w(TAG, "Porcupine access key not configured")
+                return StartResult.NO_ACCESS_KEY
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
+                Log.w(TAG, "SYSTEM_ALERT_WINDOW not granted, wake word overlay won't show over lock screen")
+            }
             val intent = Intent(context, WakeWordService::class.java)
             context.startForegroundService(intent)
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
+                StartResult.NO_OVERLAY_PERMISSION
+            } else {
+                StartResult.OK
+            }
         }
 
         fun stop(context: Context) {

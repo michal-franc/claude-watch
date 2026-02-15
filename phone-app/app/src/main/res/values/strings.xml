@@ -16,4 +16,8 @@
     <string name="connecting">Connecting...</string>
     <string name="wake_word_listening">Listening…</string>
     <string name="wake_word_sending">Sending…</string>
+    <string name="recording_countdown">Recording… %ds</string>
+    <string name="copied">Copied!</string>
+    <string name="agent_thinking">Thinking…</string>
+    <string name="agent_using_tool">Using %s…</string>
 </resources>

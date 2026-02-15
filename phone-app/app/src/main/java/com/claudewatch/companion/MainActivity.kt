@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.CountDownTimer
 import android.graphics.drawable.ClipDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
@@ -12,6 +13,7 @@ import android.os.Bundle
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
+import android.view.animation.AnimationUtils
 import android.view.inputmethod.EditorInfo
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -57,6 +59,11 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "MainActivity"
         private const val PERMISSION_REQUEST_CODE = 1001
         private const val NOTIFICATION_PERMISSION_CODE = 1002
+        private const val MAX_RECORDING_SECONDS = 60
+        private const val WARNING_SECONDS = 10
+
+        /** Signals when a permission prompt is active so overlays (e.g. WakeWordActivity) can dismiss. */
+        val permissionPromptActive = MutableStateFlow(false)
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -72,6 +79,7 @@ class MainActivity : AppCompatActivity() {
     private var mediaRecorder: MediaRecorder? = null
     private var audioFile: File? = null
     private var isRecording = false
+    private var recordingTimer: CountDownTimer? = null
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -110,7 +118,15 @@ class MainActivity : AppCompatActivity() {
 
         // Auto-start wake word service if enabled
         if (SettingsActivity.isWakeWordEnabled(this)) {
-            WakeWordService.start(this)
+            when (WakeWordService.start(this)) {
+                WakeWordService.Companion.StartResult.NO_MIC_PERMISSION ->
+                    Toast.makeText(this, "Wake word requires microphone permission", Toast.LENGTH_LONG).show()
+                WakeWordService.Companion.StartResult.NO_ACCESS_KEY ->
+                    Toast.makeText(this, "Wake word access key not configured", Toast.LENGTH_LONG).show()
+                WakeWordService.Companion.StartResult.NO_OVERLAY_PERMISSION ->
+                    Toast.makeText(this, "Enable 'Draw over other apps' for wake word on lock screen", Toast.LENGTH_LONG).show()
+                WakeWordService.Companion.StartResult.OK -> {}
+            }
         }
     }
 
@@ -324,7 +340,8 @@ class MainActivity : AppCompatActivity() {
 
             isRecording = true
             binding.voiceButton.setBackgroundResource(R.drawable.bg_circle_button_recording)
-            Toast.makeText(this, "Recording...", Toast.LENGTH_SHORT).show()
+            showRecordingBanner()
+            startRecordingTimer()
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start recording", e)
@@ -332,7 +349,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showRecordingBanner() {
+        binding.recordingStatusText.text = getString(R.string.recording_countdown, MAX_RECORDING_SECONDS)
+        binding.recordingStatusBar.visibility = View.VISIBLE
+        val pulse = AnimationUtils.loadAnimation(this, R.anim.pulse)
+        binding.recordingDot.startAnimation(pulse)
+    }
+
+    private fun hideRecordingBanner() {
+        binding.recordingDot.clearAnimation()
+        binding.recordingStatusBar.visibility = View.GONE
+    }
+
     private fun stopRecordingAndSend() {
+        cancelRecordingTimer()
+        hideRecordingBanner()
+
         try {
             mediaRecorder?.apply {
                 stop()
@@ -350,6 +382,29 @@ class MainActivity : AppCompatActivity() {
                 sendAudioToServer(file)
             }
         }
+    }
+
+    private fun startRecordingTimer() {
+        recordingTimer = object : CountDownTimer(
+            MAX_RECORDING_SECONDS * 1000L, 1000L
+        ) {
+            override fun onTick(millisUntilFinished: Long) {
+                val secondsLeft = (millisUntilFinished / 1000).toInt()
+                binding.recordingStatusText.text = getString(R.string.recording_countdown, secondsLeft)
+            }
+
+            override fun onFinish() {
+                if (isRecording) {
+                    Log.d(TAG, "Max recording duration reached, auto-stopping")
+                    stopRecordingAndSend()
+                }
+            }
+        }.start()
+    }
+
+    private fun cancelRecordingTimer() {
+        recordingTimer?.cancel()
+        recordingTimer = null
     }
 
     private fun sendAudioToServer(file: File) {
@@ -418,6 +473,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             webSocketClient?.claudeState?.collectLatest { state ->
                 updateCreatureState(state.status)
+                updateAgentStatus(state)
                 resetIdleTimeout()
             }
         }
@@ -479,15 +535,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updatePromptUI(prompt: ClaudePrompt?) {
-        if (prompt == null) {
-            binding.promptContainer.visibility = View.GONE
-            return
-        }
+        val viewState = PermissionPromptHelper.computeViewState(prompt)
+        binding.promptContainer.visibility = viewState.promptContainerVisibility
+        binding.creatureView.visibility = viewState.creatureViewVisibility
+        binding.inputBar.visibility = viewState.inputBarVisibility
+        permissionPromptActive.value = viewState.permissionPromptActive
 
-        binding.promptContainer.visibility = View.VISIBLE
+        if (prompt == null) return
 
         // Show title if present
-        if (!prompt.title.isNullOrEmpty()) {
+        if (viewState.showTitle) {
             binding.promptTitle.text = prompt.title
             binding.promptTitle.visibility = View.VISIBLE
         } else {
@@ -495,9 +552,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Show context if present (e.g., bash command)
-        if (!prompt.context.isNullOrEmpty()) {
+        if (viewState.showContext) {
             binding.promptContext.text = prompt.context
             binding.promptContext.visibility = View.VISIBLE
+            binding.promptContext.movementMethod = android.text.method.ScrollingMovementMethod.getInstance()
         } else {
             binding.promptContext.visibility = View.GONE
         }
@@ -569,8 +627,9 @@ class MainActivity : AppCompatActivity() {
                             .post(json.toString().toRequestBody("application/json".toMediaType()))
                             .build()
 
-                        val response = httpClient.newCall(request).execute()
-                        response.isSuccessful
+                        httpClient.newCall(request).execute().use { response ->
+                            response.isSuccessful
+                        }
                     } else {
                         // Regular prompt - use prompt endpoint
                         val url = "$baseUrl/api/prompt/respond"
@@ -584,14 +643,19 @@ class MainActivity : AppCompatActivity() {
                             .post(json.toString().toRequestBody("application/json".toMediaType()))
                             .build()
 
-                        val response = httpClient.newCall(request).execute()
-                        response.isSuccessful
+                        httpClient.newCall(request).execute().use { response ->
+                            response.isSuccessful
+                        }
                     }
                 }
 
                 if (result) {
-                    // Hide prompt (server will send update via WebSocket)
-                    binding.promptContainer.visibility = View.GONE
+                    // Hide prompt and restore layout (server will send update via WebSocket)
+                    val restored = PermissionPromptHelper.computePostResponseState()
+                    binding.promptContainer.visibility = restored.promptContainerVisibility
+                    binding.creatureView.visibility = restored.creatureViewVisibility
+                    binding.inputBar.visibility = restored.inputBarVisibility
+                    permissionPromptActive.value = restored.permissionPromptActive
                 } else {
                     Toast.makeText(this@MainActivity, "Failed to send response", Toast.LENGTH_SHORT).show()
                 }
@@ -629,6 +693,30 @@ class MainActivity : AppCompatActivity() {
             else -> CreatureState.IDLE
         }
         binding.creatureView.setState(creatureState)
+    }
+
+    private fun updateAgentStatus(state: com.claudewatch.companion.network.ClaudeState) {
+        when {
+            state.status == "thinking" && !state.currentTool.isNullOrEmpty() -> {
+                binding.agentStatusBar.visibility = View.VISIBLE
+                binding.agentStatusText.text = getString(R.string.agent_using_tool, state.currentTool)
+                binding.agentStatusSpinner.indeterminateTintList =
+                    android.content.res.ColorStateList.valueOf(
+                        ContextCompat.getColor(this, R.color.agent_status_tool)
+                    )
+            }
+            state.status == "thinking" -> {
+                binding.agentStatusBar.visibility = View.VISIBLE
+                binding.agentStatusText.text = getString(R.string.agent_thinking)
+                binding.agentStatusSpinner.indeterminateTintList =
+                    android.content.res.ColorStateList.valueOf(
+                        ContextCompat.getColor(this, R.color.agent_status_thinking)
+                    )
+            }
+            else -> {
+                binding.agentStatusBar.visibility = View.GONE
+            }
+        }
     }
 
     private fun resetIdleTimeout() {
@@ -674,6 +762,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        cancelRecordingTimer()
         mediaRecorder?.release()
         webSocketClient?.destroy()
         httpClient.dispatcher.executorService.shutdown()

@@ -1307,8 +1307,8 @@ class DictationHandler(BaseHTTPRequestHandler):
             # Update the permission step in request history
             claude_request_id = perm.get("claude_request_id")
             if claude_request_id:
-                requested_at = datetime.fromisoformat(perm["timestamp"])
-                resolved_at = datetime.now()
+                requested_at = datetime.fromisoformat(perm["timestamp"].replace("Z", "+00:00"))
+                resolved_at = datetime.now(timezone.utc)
                 duration_ms = int((resolved_at - requested_at).total_seconds() * 1000)
                 tool_name = perm.get("tool_name", "unknown")
                 update_permission_step(
