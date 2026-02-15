@@ -98,6 +98,36 @@
         android:layout_height="0dp"
         android:layout_weight="4" />
 
+    <!-- Agent activity status bar -->
+    <LinearLayout
+        android:id="@+id/agentStatusBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="6dp"
+        android:background="@color/background_surface"
+        android:visibility="gone">
+
+        <ProgressBar
+            android:id="@+id/agentStatusSpinner"
+            style="?android:attr/progressBarStyleSmall"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:indeterminateTint="@color/agent_status_tool" />
+
+        <TextView
+            android:id="@+id/agentStatusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textColor="@color/agent_status_text"
+            android:textSize="13sp"
+            android:text="@string/agent_thinking" />
+
+    </LinearLayout>
+
     <!-- Divider -->
     <View
         android:layout_width="match_parent"

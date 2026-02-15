@@ -25,7 +25,8 @@ data class ChatMessage(
 
 data class ClaudeState(
     val status: String = "idle",  // idle, listening, thinking, speaking, waiting
-    val requestId: String? = null
+    val requestId: String? = null,
+    val currentTool: String? = null  // Current tool being used (e.g., "Bash", "Read", "Edit")
 )
 
 data class ContextUsage(
@@ -167,11 +168,23 @@ class WebSocketClient(
             val json = JSONObject(text)
             when (json.optString("type")) {
                 "state" -> {
+                    val status = json.optString("status", "idle")
                     val requestId = json.optString("request_id", "")
+                    // Clear tool when transitioning away from thinking (idle, speaking, etc.)
+                    val keepTool = status == "thinking"
                     _claudeState.value = ClaudeState(
-                        status = json.optString("status", "idle"),
-                        requestId = requestId.ifEmpty { null }
+                        status = status,
+                        requestId = requestId.ifEmpty { null },
+                        currentTool = if (keepTool) _claudeState.value.currentTool else null
                     )
+                }
+                "tool" -> {
+                    val toolName = json.optString("tool", "")
+                    if (toolName.isNotEmpty()) {
+                        _claudeState.value = _claudeState.value.copy(
+                            currentTool = toolName
+                        )
+                    }
                 }
                 "chat" -> {
                     val message = ChatMessage(

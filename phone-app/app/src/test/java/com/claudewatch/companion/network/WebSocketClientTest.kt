@@ -56,6 +56,7 @@ class WebSocketClientTest {
 
         assertEquals("idle", state.status)
         assertNull(state.requestId)
+        assertNull(state.currentTool)
     }
 
     @Test
@@ -64,6 +65,26 @@ class WebSocketClientTest {
 
         assertEquals("thinking", state.status)
         assertEquals("req-123", state.requestId)
+        assertNull(state.currentTool)
+    }
+
+    @Test
+    fun `ClaudeState with currentTool`() {
+        val state = ClaudeState(status = "thinking", requestId = "req-123", currentTool = "Bash")
+
+        assertEquals("thinking", state.status)
+        assertEquals("req-123", state.requestId)
+        assertEquals("Bash", state.currentTool)
+    }
+
+    @Test
+    fun `ClaudeState copy updates currentTool`() {
+        val state = ClaudeState(status = "thinking", requestId = "req-123")
+        val updated = state.copy(currentTool = "Read")
+
+        assertEquals("thinking", updated.status)
+        assertEquals("req-123", updated.requestId)
+        assertEquals("Read", updated.currentTool)
     }
 
     @Test
@@ -354,5 +375,40 @@ class WebSocketClientTest {
         val messages = json.optJSONArray("messages")
         assertNotNull(messages)
         assertEquals(0, messages!!.length())
+    }
+
+    @Test
+    fun `parseToolMessage extracts tool name`() {
+        val json = JSONObject().apply {
+            put("type", "tool")
+            put("request_id", "req-123")
+            put("tool", "Bash")
+        }
+
+        assertEquals("tool", json.optString("type"))
+        assertEquals("Bash", json.optString("tool"))
+        assertEquals("req-123", json.optString("request_id"))
+    }
+
+    @Test
+    fun `parseToolMessage with various tool names`() {
+        val toolNames = listOf("Bash", "Read", "Write", "Edit", "Glob", "Grep", "Task", "WebFetch")
+        for (toolName in toolNames) {
+            val json = JSONObject().apply {
+                put("type", "tool")
+                put("tool", toolName)
+            }
+            assertEquals(toolName, json.optString("tool"))
+        }
+    }
+
+    @Test
+    fun `parseToolMessage handles empty tool name`() {
+        val json = JSONObject().apply {
+            put("type", "tool")
+            put("tool", "")
+        }
+
+        assertEquals("", json.optString("tool", ""))
     }
 }
