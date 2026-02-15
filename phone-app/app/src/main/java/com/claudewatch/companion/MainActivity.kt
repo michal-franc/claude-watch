@@ -57,6 +57,9 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "MainActivity"
         private const val PERMISSION_REQUEST_CODE = 1001
         private const val NOTIFICATION_PERMISSION_CODE = 1002
+
+        /** Signals when a permission prompt is active so overlays (e.g. WakeWordActivity) can dismiss. */
+        val permissionPromptActive = MutableStateFlow(false)
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -481,10 +484,22 @@ class MainActivity : AppCompatActivity() {
     private fun updatePromptUI(prompt: ClaudePrompt?) {
         if (prompt == null) {
             binding.promptContainer.visibility = View.GONE
+            // Restore creature and input bar when prompt is dismissed
+            binding.creatureView.visibility = View.VISIBLE
+            binding.inputBar.visibility = View.VISIBLE
+            permissionPromptActive.value = false
             return
         }
 
         binding.promptContainer.visibility = View.VISIBLE
+
+        // Hide creature view and input bar so the prompt gets full screen space
+        // and no other views can intercept touch events meant for prompt buttons
+        binding.creatureView.visibility = View.GONE
+        binding.inputBar.visibility = View.GONE
+
+        // Signal overlays (e.g. WakeWordActivity) to dismiss so they don't block the prompt
+        permissionPromptActive.value = true
 
         // Show title if present
         if (!prompt.title.isNullOrEmpty()) {
@@ -590,8 +605,11 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 if (result) {
-                    // Hide prompt (server will send update via WebSocket)
+                    // Hide prompt and restore layout (server will send update via WebSocket)
                     binding.promptContainer.visibility = View.GONE
+                    binding.creatureView.visibility = View.VISIBLE
+                    binding.inputBar.visibility = View.VISIBLE
+                    permissionPromptActive.value = false
                 } else {
                     Toast.makeText(this@MainActivity, "Failed to send response", Toast.LENGTH_SHORT).show()
                 }

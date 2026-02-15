@@ -13,6 +13,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.claudewatch.companion.MainActivity
 import com.claudewatch.companion.R
 import com.claudewatch.companion.creature.CreatureState
 import com.claudewatch.companion.creature.CreatureView
@@ -110,6 +111,16 @@ class WakeWordActivity : AppCompatActivity() {
         lifecycleScope.launch {
             WakeWordService.amplitude.collect { amp ->
                 audioWave.setAmplitude(amp)
+            }
+        }
+
+        // Finish overlay when a permission prompt needs user interaction
+        lifecycleScope.launch {
+            MainActivity.permissionPromptActive.collect { active ->
+                if (active) {
+                    Log.i(TAG, "Permission prompt active, finishing overlay to unblock buttons")
+                    finish()
+                }
             }
         }
     }
