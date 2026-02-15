@@ -226,7 +226,10 @@ class WebSocketClient(
                             options = options,
                             timestamp = promptJson.optString("timestamp"),
                             title = if (promptJson.has("title")) promptJson.optString("title") else null,
-                            context = if (promptJson.has("context")) promptJson.optString("context") else null
+                            context = if (promptJson.has("context")) promptJson.optString("context") else null,
+                            requestId = if (promptJson.has("request_id")) promptJson.optString("request_id") else null,
+                            toolName = if (promptJson.has("tool_name")) promptJson.optString("tool_name") else null,
+                            isPermission = promptJson.optBoolean("isPermission", false)
                         )
                     } else {
                         _currentPrompt.value = null

@@ -83,7 +83,13 @@ class SettingsActivity : AppCompatActivity() {
             .apply()
 
         if (wakeWord) {
-            WakeWordService.start(this)
+            when (WakeWordService.start(this)) {
+                WakeWordService.Companion.StartResult.NO_MIC_PERMISSION ->
+                    Toast.makeText(this, "Wake word requires microphone permission", Toast.LENGTH_LONG).show()
+                WakeWordService.Companion.StartResult.NO_ACCESS_KEY ->
+                    Toast.makeText(this, "Wake word access key not configured", Toast.LENGTH_LONG).show()
+                WakeWordService.Companion.StartResult.OK -> {}
+            }
         } else {
             WakeWordService.stop(this)
         }

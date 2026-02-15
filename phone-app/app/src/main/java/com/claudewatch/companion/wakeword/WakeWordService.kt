@@ -1,5 +1,6 @@
 package com.claudewatch.companion.wakeword
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,12 +8,14 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationCompat
 import com.claudewatch.companion.BuildConfig
 import com.claudewatch.companion.MainActivity
@@ -56,9 +59,22 @@ class WakeWordService : Service() {
         private val _amplitude = MutableStateFlow(0f)
         val amplitude = _amplitude.asStateFlow()
 
-        fun start(context: Context) {
+        /** Result of attempting to start the wake word service. */
+        enum class StartResult { OK, NO_MIC_PERMISSION, NO_ACCESS_KEY }
+
+        fun start(context: Context): StartResult {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "RECORD_AUDIO not granted, skipping wake word service start")
+                return StartResult.NO_MIC_PERMISSION
+            }
+            if (BuildConfig.PORCUPINE_ACCESS_KEY.isBlank()) {
+                Log.w(TAG, "Porcupine access key not configured")
+                return StartResult.NO_ACCESS_KEY
+            }
             val intent = Intent(context, WakeWordService::class.java)
             context.startForegroundService(intent)
+            return StartResult.OK
         }
 
         fun stop(context: Context) {

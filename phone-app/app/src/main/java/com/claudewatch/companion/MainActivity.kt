@@ -118,7 +118,13 @@ class MainActivity : AppCompatActivity() {
 
         // Auto-start wake word service if enabled
         if (SettingsActivity.isWakeWordEnabled(this)) {
-            WakeWordService.start(this)
+            when (WakeWordService.start(this)) {
+                WakeWordService.Companion.StartResult.NO_MIC_PERMISSION ->
+                    Toast.makeText(this, "Wake word requires microphone permission", Toast.LENGTH_LONG).show()
+                WakeWordService.Companion.StartResult.NO_ACCESS_KEY ->
+                    Toast.makeText(this, "Wake word access key not configured", Toast.LENGTH_LONG).show()
+                WakeWordService.Companion.StartResult.OK -> {}
+            }
         }
     }
 
@@ -618,8 +624,9 @@ class MainActivity : AppCompatActivity() {
                             .post(json.toString().toRequestBody("application/json".toMediaType()))
                             .build()
 
-                        val response = httpClient.newCall(request).execute()
-                        response.isSuccessful
+                        httpClient.newCall(request).execute().use { response ->
+                            response.isSuccessful
+                        }
                     } else {
                         // Regular prompt - use prompt endpoint
                         val url = "$baseUrl/api/prompt/respond"
@@ -633,8 +640,9 @@ class MainActivity : AppCompatActivity() {
                             .post(json.toString().toRequestBody("application/json".toMediaType()))
                             .build()
 
-                        val response = httpClient.newCall(request).execute()
-                        response.isSuccessful
+                        httpClient.newCall(request).execute().use { response ->
+                            response.isSuccessful
+                        }
                     }
                 }
 

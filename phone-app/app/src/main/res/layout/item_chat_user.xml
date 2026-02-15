@@ -21,7 +21,7 @@
         android:textColor="@color/chat_text_light"
         android:textSize="15sp"
         android:lineSpacingMultiplier="1.2"
-        android:textIsSelectable="true" />
+        android:textColorHighlight="#50FFFFFF" />
 
     <TextView
         android:id="@+id/statusIndicator"
