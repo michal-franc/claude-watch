@@ -39,6 +39,9 @@
     <color name="creature_glow_listening">#5066BB6A</color>
     <color name="creature_glow_purple">#309C27B0</color>
 
+    <!-- Recording -->
+    <color name="recording_status_bg">#33F44336</color>
+
     <!-- Agent status -->
     <color name="agent_status_thinking">#FACC15</color>
     <color name="agent_status_tool">#60A5FA</color>

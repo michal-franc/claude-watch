@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
+import android.view.animation.AnimationUtils
 import android.view.inputmethod.EditorInfo
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -331,7 +332,7 @@ class MainActivity : AppCompatActivity() {
 
             isRecording = true
             binding.voiceButton.setBackgroundResource(R.drawable.bg_circle_button_recording)
-            Toast.makeText(this, "Recording...", Toast.LENGTH_SHORT).show()
+            showRecordingBanner()
             startRecordingTimer()
 
         } catch (e: Exception) {
@@ -340,8 +341,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showRecordingBanner() {
+        binding.recordingStatusText.text = getString(R.string.recording_countdown, MAX_RECORDING_SECONDS)
+        binding.recordingStatusBar.visibility = View.VISIBLE
+        val pulse = AnimationUtils.loadAnimation(this, R.anim.pulse)
+        binding.recordingDot.startAnimation(pulse)
+    }
+
+    private fun hideRecordingBanner() {
+        binding.recordingDot.clearAnimation()
+        binding.recordingStatusBar.visibility = View.GONE
+    }
+
     private fun stopRecordingAndSend() {
         cancelRecordingTimer()
+        hideRecordingBanner()
+
         try {
             mediaRecorder?.apply {
                 stop()
@@ -367,23 +382,12 @@ class MainActivity : AppCompatActivity() {
         ) {
             override fun onTick(millisUntilFinished: Long) {
                 val secondsLeft = (millisUntilFinished / 1000).toInt()
-                if (isRecording && secondsLeft == WARNING_SECONDS) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Recording stops in ${secondsLeft}s",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
+                binding.recordingStatusText.text = getString(R.string.recording_countdown, secondsLeft)
             }
 
             override fun onFinish() {
                 if (isRecording) {
                     Log.d(TAG, "Max recording duration reached, auto-stopping")
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Max recording time reached",
-                        Toast.LENGTH_SHORT
-                    ).show()
                     stopRecordingAndSend()
                 }
             }
