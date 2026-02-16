@@ -308,14 +308,20 @@ def _summarize_tool_input(name, input_data):
     return ""
 
 
-def init_claude_wrapper():
+def init_claude_wrapper(skip_history: bool = False):
     """Initialize the Claude wrapper with global callbacks and start the background watcher.
 
     Global callbacks broadcast all activity to WebSocket clients, regardless of
     whether the prompt came from the server or was typed directly in tmux.
+
+    Args:
+        skip_history: If True, the watcher skips old transcript entries for the
+            next new session (used after restart so clients start fresh).
     """
     model = transcription_config.get("claude_model")
     wrapper = ClaudeWrapper.get_instance(claude_workdir, model=model)
+    if skip_history:
+        wrapper._skip_history_on_new_session = True
 
     def _store_claude_timestamp(req_id, claude_timestamp):
         """Store the first and last claude timestamp on the history entry."""
@@ -964,12 +970,14 @@ class DictationHandler(BaseHTTPRequestHandler):
             if wrapper:
                 wrapper.shutdown()
                 active_claude_wrapper = None
-            # Clear chat history
+            # Clear chat and request history so clients start fresh
             chat_history.clear()
+            request_history.clear()
             set_claude_state("idle")
             broadcast_message({"type": "history", "messages": []})
-            # Re-initialize wrapper with background watcher
-            init_claude_wrapper()
+            # Re-initialize wrapper; skip_history prevents the watcher from
+            # replaying old transcript entries into the cleared history
+            init_claude_wrapper(skip_history=True)
             logger.info("[SERVER] Claude process restarted")
             self.send_json(200, {"status": "restarted"})
         except Exception as e:

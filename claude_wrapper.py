@@ -172,6 +172,11 @@ class ClaudeTmuxSession:
         self._session_refresh_needed = threading.Event()
         self._watcher_start_line: int | None = None  # Set by run() to avoid skipping responses
 
+        # When True, the watcher skips to end-of-file for new sessions
+        # instead of replaying from line 0. Set by server on restart so
+        # that clients get a clean transcript.
+        self._skip_history_on_new_session = False
+
         # Flag: True when run() is active (server-initiated prompt)
         # Used to suppress on_user_message for server prompts (already added by caller)
         self._server_prompt_active = False
@@ -290,9 +295,15 @@ class ClaudeTmuxSession:
             if need_new_watcher:
                 old_sid = watcher.session_id if watcher else None
                 # _watcher_start_line is only valid for the SAME session (avoids
-                # skipping fast responses). For a new session, start from 0.
+                # skipping fast responses). For a new session, start from 0
+                # unless _skip_history_on_new_session is set (restart scenario).
                 if self._watcher_start_line is not None and old_sid == self.session_id:
                     start_line = self._watcher_start_line
+                elif old_sid != self.session_id and self._skip_history_on_new_session:
+                    # After a restart: skip to end of file so old transcript isn't replayed
+                    start_line = get_jsonl_line_count(self.workdir, self.session_id)
+                    self._skip_history_on_new_session = False
+                    logger.info("[WATCHER] Skipping history after restart")
                 else:
                     if old_sid != self.session_id:
                         start_line = 0
