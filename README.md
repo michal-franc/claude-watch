@@ -3,7 +3,7 @@
 Voice-to-Claude pipeline: Speak into your Galaxy Watch or phone (or just say "hey toadie"), Claude Code executes your command, and responses come back as text or TTS audio. Includes permission prompts for dangerous operations.
 
 <p align="center">
-  <video src="https://mfranc.com/images/claudewatchdemo.mp4" width="230" autoplay loop muted playsinline></video>
+  <a href="https://mfranc.com/images/claudewatchdemo.mp4"><img src="docs/phone-mockups/screenshots/demo-thumb.jpg" width="230" alt="Demo video — click to play"></a>
   &nbsp;
   <img src="docs/watch-mockups/screenshots/watch-idle.png" width="170" alt="Watch - Idle">
   &nbsp;
