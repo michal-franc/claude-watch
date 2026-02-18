@@ -131,10 +131,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupChatRecyclerView() {
-        chatAdapter = ChatAdapter { message ->
-            // Retry sending failed/pending message
-            retryMessage(message)
-        }
+        val serverAddress = SettingsActivity.getServerAddress(this)
+        val baseUrl = "http://${serverAddress.replace(":5567", ":5566")}"
+        chatAdapter = ChatAdapter(
+            onRetryClick = { message -> retryMessage(message) },
+            serverBaseUrl = baseUrl
+        )
         binding.chatRecyclerView.apply {
             layoutManager = LinearLayoutManager(this@MainActivity).apply {
                 stackFromEnd = true

@@ -8,16 +8,19 @@ import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import coil.load
 import com.claudewatch.companion.R
 import com.claudewatch.companion.network.ChatMessage
 import com.claudewatch.companion.network.MessageStatus
 
 class ChatAdapter(
-    private val onRetryClick: ((ChatMessage) -> Unit)? = null
+    private val onRetryClick: ((ChatMessage) -> Unit)? = null,
+    private val serverBaseUrl: String = ""
 ) : ListAdapter<ChatMessage, ChatAdapter.MessageViewHolder>(MessageDiffCallback()) {
 
     companion object {
@@ -42,7 +45,7 @@ class ChatAdapter(
 
     override fun onBindViewHolder(holder: MessageViewHolder, position: Int) {
         val message = getItem(position)
-        holder.bind(message)
+        holder.bind(message, serverBaseUrl)
 
         // Set click listener for failed messages
         if (message.status == MessageStatus.FAILED || message.status == MessageStatus.PENDING) {
@@ -70,12 +73,25 @@ class ChatAdapter(
 
     class MessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val messageText: TextView = itemView.findViewById(R.id.messageText)
+        private val chatImage: ImageView? = itemView.findViewById(R.id.chatImage)
         private val statusIndicator: TextView? = itemView.findViewById(R.id.statusIndicator)
         private val copiedIndicator: TextView? = itemView.findViewById(R.id.copiedIndicator)
         private val handler = Handler(Looper.getMainLooper())
 
-        fun bind(message: ChatMessage) {
+        fun bind(message: ChatMessage, serverBaseUrl: String = "") {
             messageText.text = message.content
+
+            // Load image if present
+            if (chatImage != null) {
+                val imageUrl = message.imageUrl
+                if (!imageUrl.isNullOrEmpty() && serverBaseUrl.isNotEmpty()) {
+                    val fullUrl = serverBaseUrl + imageUrl
+                    chatImage.visibility = View.VISIBLE
+                    chatImage.load(fullUrl)
+                } else {
+                    chatImage.visibility = View.GONE
+                }
+            }
 
             // Reset copied indicator
             copiedIndicator?.visibility = View.GONE
