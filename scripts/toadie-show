@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Usage: toadie-show <file-path> [caption]
+# Sends an image to the Claude Watch server for display in clients.
+set -euo pipefail
+
+SERVER_URL="${TOADIE_SERVER_URL:-http://localhost:5566}"
+
+if [ $# -lt 1 ]; then
+    echo "Usage: toadie-show <file-path> [caption]" >&2
+    exit 1
+fi
+
+FILE_PATH="$1"
+CAPTION="${2:-}"
+
+if [ ! -f "$FILE_PATH" ]; then
+    echo "Error: File not found: $FILE_PATH" >&2
+    exit 1
+fi
+
+FILENAME=$(basename "$FILE_PATH")
+FILE_B64=$(base64 -w0 "$FILE_PATH")
+
+BODY=$(jq -n \
+    --arg file "$FILE_B64" \
+    --arg filename "$FILENAME" \
+    --arg caption "$CAPTION" \
+    '{file: $file, filename: $filename, caption: $caption}')
+
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+    -H "Content-Type: application/json" \
+    -d "$BODY" \
+    "${SERVER_URL}/api/image")
+
+HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+BODY_RESP=$(echo "$RESPONSE" | sed '$d')
+
+if [ "$HTTP_CODE" -ne 200 ]; then
+    echo "Error: Server returned HTTP $HTTP_CODE" >&2
+    echo "$BODY_RESP" >&2
+    exit 1
+fi
+
+echo "$BODY_RESP"
