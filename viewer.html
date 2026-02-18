@@ -184,6 +184,14 @@
     }
     @keyframes blink { 50% { opacity: 0; } }
 
+    .chat-image {
+      max-width: 100%;
+      max-height: 300px;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      cursor: pointer;
+    }
+
     .chat-empty {
       text-align: center;
       padding: 30px;
@@ -266,6 +274,7 @@
                 :class="msg.role"
               >
                 <div class="chat-message-role">{{ msg.role }}</div>
+                <img v-if="msg.image_url" :src="msg.image_url" class="chat-image" />
                 <div class="chat-message-content">{{ msg.content }}</div>
                 <div class="chat-message-time">{{ formatTime(msg.timestamp) }}</div>
               </div>
@@ -990,7 +999,10 @@
               break
 
             case 'history':
-              chatMessages.value = msg.messages || []
+              chatMessages.value = (msg.messages || []).map(m => ({
+                ...m,
+                image_url: m.image_url || null
+              }))
               streamingText.value = ''
               nextTick(scrollChat)
               break
@@ -1000,6 +1012,18 @@
               chatMessages.value.push({
                 role: msg.role,
                 content: msg.content,
+                image_url: msg.image_url || null,
+                timestamp: msg.timestamp
+              })
+              while (chatMessages.value.length > 100) chatMessages.value.shift()
+              scrollChat()
+              break
+
+            case 'image':
+              chatMessages.value.push({
+                role: 'claude',
+                content: msg.caption || '[image]',
+                image_url: msg.url,
                 timestamp: msg.timestamp
               })
               while (chatMessages.value.length > 100) chatMessages.value.shift()

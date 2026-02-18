@@ -16,6 +16,8 @@
 - `POST /api/permission/request` - Hook submits permission
 - `GET /api/permission/status/<id>` - Hook polls for decision
 - `POST /api/permission/respond` - App approves/denies
+- `POST /api/image` - Upload image for display in clients (base64 JSON body)
+- `GET /api/image/<id>` - Serve uploaded image binary
 
 ## WebSocket Messages (port 5567)
 
@@ -29,6 +31,7 @@
 - `text_chunk` - Streaming text chunk from Claude
 - `tool` - Tool use notification
 - `clients` - Connected clients list
+- `image` - New image available (id, url, caption, timestamp)
 
 ## Permission System
 
