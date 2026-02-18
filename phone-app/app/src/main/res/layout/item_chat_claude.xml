@@ -9,6 +9,17 @@
     android:paddingTop="4dp"
     android:paddingBottom="4dp">
 
+    <ImageView
+        android:id="@+id/chatImage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:maxHeight="300dp"
+        android:adjustViewBounds="true"
+        android:scaleType="fitCenter"
+        android:layout_marginBottom="4dp"
+        android:visibility="gone"
+        android:contentDescription="@string/app_name" />
+
     <TextView
         android:id="@+id/messageText"
         android:layout_width="wrap_content"
