@@ -38,6 +38,9 @@ AUTO_APPROVE_PATTERNS = {
         "which ",
         "type ",
         "file ",
+        "ddcutil ",
+        "redshift ",
+        "redshift -",
     ],
     "Read": True,  # Always auto-approve reads
     "Glob": True,
