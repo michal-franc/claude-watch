@@ -31,7 +31,7 @@
 - `text_chunk` - Streaming text chunk from Claude
 - `tool` - Tool use notification
 - `clients` - Connected clients list
-- `image` - New image available (id, url, caption, timestamp)
+- `image` - New image available (id, url, caption, mime, timestamp). The `mime` field contains the MIME type (e.g. `image/png`, `text/html`); clients should render `text/html` in an iframe/WebView instead of an `<img>` tag.
 
 ## Permission System
 
