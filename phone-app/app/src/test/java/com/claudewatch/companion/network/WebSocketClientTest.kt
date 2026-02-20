@@ -900,4 +900,191 @@ class WebSocketClientTest {
 
         assertEquals("", json.optString("tool", ""))
     }
+
+    // --- Image message tests ---
+
+    @Test
+    fun `handleMessage image adds message with imageUrl`() {
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "image")
+            put("id", "img-123")
+            put("url", "/api/image/img-123")
+            put("caption", "Screenshot")
+            put("timestamp", "2026-02-18T10:00:00Z")
+        }.toString())
+
+        val messages = client.chatMessages.value
+        assertEquals(1, messages.size)
+        assertEquals("claude", messages[0].role)
+        assertEquals("Screenshot", messages[0].content)
+        assertEquals("/api/image/img-123", messages[0].imageUrl)
+        assertEquals("2026-02-18T10:00:00Z", messages[0].timestamp)
+    }
+
+    @Test
+    fun `handleMessage image with empty caption uses fallback`() {
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "image")
+            put("id", "img-456")
+            put("url", "/api/image/img-456")
+            put("caption", "")
+            put("timestamp", "2026-02-18T10:00:00Z")
+        }.toString())
+
+        val messages = client.chatMessages.value
+        assertEquals(1, messages.size)
+        assertEquals("[image]", messages[0].content)
+        assertEquals("/api/image/img-456", messages[0].imageUrl)
+    }
+
+    @Test
+    fun `handleMessage chat preserves imageUrl when present`() {
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "chat")
+            put("role", "claude")
+            put("content", "Here is an image")
+            put("image_url", "/api/image/abc")
+            put("timestamp", "2026-02-18T10:00:00Z")
+        }.toString())
+
+        val messages = client.chatMessages.value
+        assertEquals(1, messages.size)
+        assertEquals("/api/image/abc", messages[0].imageUrl)
+    }
+
+    @Test
+    fun `handleMessage chat without imageUrl sets null`() {
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "chat")
+            put("role", "user")
+            put("content", "Hello")
+            put("timestamp", "2026-02-18T10:00:00Z")
+        }.toString())
+
+        val messages = client.chatMessages.value
+        assertEquals(1, messages.size)
+        assertNull(messages[0].imageUrl)
+    }
+
+    @Test
+    fun `handleMessage history preserves imageUrl`() {
+        val messagesArray = JSONArray().apply {
+            put(JSONObject().apply {
+                put("role", "claude")
+                put("content", "[image]")
+                put("image_url", "/api/image/xyz")
+                put("timestamp", "t1")
+            })
+            put(JSONObject().apply {
+                put("role", "user")
+                put("content", "Nice!")
+                put("timestamp", "t2")
+            })
+        }
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "history")
+            put("messages", messagesArray)
+        }.toString())
+
+        val messages = client.chatMessages.value
+        assertEquals(2, messages.size)
+        assertEquals("/api/image/xyz", messages[0].imageUrl)
+        assertNull(messages[1].imageUrl)
+    }
+
+    @Test
+    fun `ChatMessage imageUrl defaults to null`() {
+        val message = ChatMessage(
+            role = "user",
+            content = "Hello",
+            timestamp = "t1"
+        )
+        assertNull(message.imageUrl)
+    }
+
+    // --- MIME field tests ---
+
+    @Test
+    fun `handleMessage image with mime field preserves it`() {
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "image")
+            put("id", "img-html")
+            put("url", "/api/image/img-html")
+            put("caption", "D3 chart")
+            put("mime", "text/html")
+            put("timestamp", "2026-02-18T10:00:00Z")
+        }.toString())
+
+        val messages = client.chatMessages.value
+        assertEquals(1, messages.size)
+        assertEquals("text/html", messages[0].mime)
+    }
+
+    @Test
+    fun `handleMessage image without mime field sets null`() {
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "image")
+            put("id", "img-old")
+            put("url", "/api/image/img-old")
+            put("caption", "Screenshot")
+            put("timestamp", "2026-02-18T10:00:00Z")
+        }.toString())
+
+        val messages = client.chatMessages.value
+        assertEquals(1, messages.size)
+        assertNull(messages[0].mime)
+    }
+
+    @Test
+    fun `handleMessage chat with mime field preserves it`() {
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "chat")
+            put("role", "claude")
+            put("content", "Here is a chart")
+            put("image_url", "/api/image/abc")
+            put("mime", "text/html")
+            put("timestamp", "2026-02-18T10:00:00Z")
+        }.toString())
+
+        val messages = client.chatMessages.value
+        assertEquals(1, messages.size)
+        assertEquals("text/html", messages[0].mime)
+    }
+
+    @Test
+    fun `handleMessage history preserves mime field`() {
+        val messagesArray = JSONArray().apply {
+            put(JSONObject().apply {
+                put("role", "claude")
+                put("content", "[image]")
+                put("image_url", "/api/image/xyz")
+                put("mime", "image/svg+xml")
+                put("timestamp", "t1")
+            })
+            put(JSONObject().apply {
+                put("role", "user")
+                put("content", "Nice!")
+                put("timestamp", "t2")
+            })
+        }
+        invokeHandleMessage(JSONObject().apply {
+            put("type", "history")
+            put("messages", messagesArray)
+        }.toString())
+
+        val messages = client.chatMessages.value
+        assertEquals(2, messages.size)
+        assertEquals("image/svg+xml", messages[0].mime)
+        assertNull(messages[1].mime)
+    }
+
+    @Test
+    fun `ChatMessage mime defaults to null`() {
+        val message = ChatMessage(
+            role = "user",
+            content = "Hello",
+            timestamp = "t1"
+        )
+        assertNull(message.mime)
+    }
 }

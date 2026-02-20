@@ -20,7 +20,9 @@ data class ChatMessage(
     val role: String,
     val content: String,
     val timestamp: String,
-    val status: MessageStatus = MessageStatus.SENT
+    val status: MessageStatus = MessageStatus.SENT,
+    val imageUrl: String? = null,
+    val mime: String? = null
 )
 
 data class ClaudeState(
@@ -190,7 +192,19 @@ class WebSocketClient(
                     val message = ChatMessage(
                         role = json.optString("role"),
                         content = json.optString("content"),
-                        timestamp = json.optString("timestamp")
+                        timestamp = json.optString("timestamp"),
+                        imageUrl = if (json.has("image_url")) json.optString("image_url") else null,
+                        mime = if (json.has("mime")) json.optString("mime") else null
+                    )
+                    _chatMessages.value = _chatMessages.value + message
+                }
+                "image" -> {
+                    val message = ChatMessage(
+                        role = "claude",
+                        content = json.optString("caption").ifEmpty { "[image]" },
+                        timestamp = json.optString("timestamp"),
+                        imageUrl = json.optString("url"),
+                        mime = if (json.has("mime")) json.optString("mime") else null
                     )
                     _chatMessages.value = _chatMessages.value + message
                 }
@@ -202,7 +216,9 @@ class WebSocketClient(
                         messages.add(ChatMessage(
                             role = msgJson.optString("role"),
                             content = msgJson.optString("content"),
-                            timestamp = msgJson.optString("timestamp")
+                            timestamp = msgJson.optString("timestamp"),
+                            imageUrl = if (msgJson.has("image_url")) msgJson.optString("image_url") else null,
+                            mime = if (msgJson.has("mime")) msgJson.optString("mime") else null
                         ))
                     }
                     _chatMessages.value = messages

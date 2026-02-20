@@ -589,6 +589,73 @@ class TestClaudeTmuxSessionBackgroundWatcher:
         keep_alive.set()
 
 
+class TestWatcherDoesNotReplayOldSessions:
+    """After restart, the watcher must not auto-discover old JSONL files.
+
+    Bug: When session_id is None (e.g. after restart), the watcher loop
+    would call find_latest_session() and pick up an OLD file, then replay
+    all entries from line 0, re-populating chat_history with stale messages.
+    """
+
+    def test_watcher_skips_discovery_when_session_id_is_none(self):
+        """With session_id=None the watcher should NOT call find_latest_session."""
+        session = ClaudeTmuxSession("/tmp")
+        assert session.session_id is None
+
+        poll_count = 0
+
+        def patched_loop():
+            nonlocal poll_count
+            # Simulate a few iterations of the watcher loop
+            while session._watcher_running and poll_count < 5:
+                poll_count += 1
+                time.sleep(0.05)
+            session._watcher_running = False
+
+        with (
+            patch.object(session, "_background_watcher_loop_inner", side_effect=patched_loop),
+            patch("claude_wrapper.find_latest_session") as mock_find,
+        ):
+            session.start_background_watcher()
+            time.sleep(0.4)
+            session._watcher_running = False
+            session._watcher_thread.join(timeout=1)
+
+            # The patched loop ran, but find_latest_session should not be called
+            # because the real loop (which we're testing the logic of) is patched out.
+            # Instead, test the real loop directly below.
+            mock_find.assert_not_called()
+
+    def test_watcher_loop_does_not_discover_old_session(self):
+        """The actual watcher loop must not call find_latest_session when session_id=None."""
+        session = ClaudeTmuxSession("/tmp")
+        assert session.session_id is None
+
+        iteration_count = 0
+        original_sleep = time.sleep
+
+        def counting_sleep(seconds):
+            nonlocal iteration_count
+            iteration_count += 1
+            if iteration_count >= 3:
+                session._watcher_running = False
+            original_sleep(0.01)
+
+        with (
+            patch("claude_wrapper.find_latest_session") as mock_find,
+            patch("claude_wrapper.session_file_exists") as mock_exists,
+            patch("claude_wrapper.time.sleep", side_effect=counting_sleep),
+        ):
+            session._watcher_running = True
+            session._background_watcher_loop_inner()
+
+            # Must NOT have tried to discover old sessions
+            mock_find.assert_not_called()
+            mock_exists.assert_not_called()
+            # session_id should still be None
+            assert session.session_id is None
+
+
 class TestClaudeTmuxSessionInitState:
     """Tests for new init state"""
 

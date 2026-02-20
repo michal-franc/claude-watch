@@ -98,6 +98,9 @@ dependencies {
     // OkHttp with WebSocket support
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // Coil for image loading
+    implementation("io.coil-kt:coil:2.6.0")
+
     // Wearable DataLayer API for watch relay
     implementation("com.google.android.gms:play-services-wearable:18.1.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")

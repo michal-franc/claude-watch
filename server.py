@@ -16,13 +16,16 @@ Endpoints:
 
 import argparse
 import asyncio
+import base64
 import json
+import mimetypes
 import os
 import socket
 import sys
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -85,6 +88,10 @@ CONFIG_OPTIONS = {
 # Directory for temporary audio files
 AUDIO_CACHE_DIR = "/tmp/claude-watch-audio"
 os.makedirs(AUDIO_CACHE_DIR, exist_ok=True)
+
+# Image store (in-memory, LRU eviction at MAX_IMAGES)
+image_store = OrderedDict()  # id -> {"data": bytes, "mime": str, "caption": str, "timestamp": str}
+MAX_IMAGES = 20
 
 # WebSocket state management
 claude_state = {
@@ -778,6 +785,11 @@ class DictationHandler(BaseHTTPRequestHandler):
             self.handle_permission_respond(content_length)
             return
 
+        # Handle image upload
+        if self.path == "/api/image":
+            self.handle_image_upload(content_length)
+            return
+
         print("=== Incoming Request ===")
         print(f"Path: {self.path}")
         print(f"Content-Type: {content_type}")
@@ -948,6 +960,8 @@ class DictationHandler(BaseHTTPRequestHandler):
             )
         elif self.path == "/api/chat":
             self.send_json(200, {"messages": chat_history, "state": claude_state, "prompt": current_prompt})
+        elif self.path.startswith("/api/image/"):
+            self.handle_image_serve()
         elif self.path == "/" or self.path == "/dashboard":
             self.serve_dashboard()
         elif self.path == "/viewer":
@@ -1358,6 +1372,97 @@ class DictationHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(audio_data)))
         self.end_headers()
         self.wfile.write(audio_data)
+
+    def handle_image_upload(self, content_length):
+        """Handle POST /api/image - upload an image for display in clients"""
+        try:
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode())
+
+            file_b64 = data.get("file")
+            if not file_b64:
+                self.send_json(400, {"status": "error", "message": "Missing 'file' field"})
+                return
+
+            try:
+                image_data = base64.b64decode(file_b64)
+            except Exception:
+                self.send_json(400, {"status": "error", "message": "Invalid base64 data"})
+                return
+
+            filename = data.get("filename", "image.png")
+            caption = data.get("caption", "")
+
+            # Detect MIME type from filename
+            mime_type, _ = mimetypes.guess_type(filename)
+            if not mime_type:
+                mime_type = "image/png"
+
+            # Generate short ID and store
+            image_id = str(uuid.uuid4())[:8]
+            image_store[image_id] = {
+                "data": image_data,
+                "mime": mime_type,
+                "caption": caption,
+                "timestamp": utc_now_iso(),
+            }
+
+            # LRU eviction
+            while len(image_store) > MAX_IMAGES:
+                image_store.popitem(last=False)
+
+            url = f"/api/image/{image_id}"
+            timestamp = utc_now_iso()
+
+            # Add to chat history
+            chat_message = {
+                "role": "claude",
+                "content": caption if caption else "[image]",
+                "image_url": url,
+                "mime": mime_type,
+                "timestamp": timestamp,
+            }
+            chat_history.append(chat_message)
+            while len(chat_history) > MAX_CHAT_HISTORY:
+                chat_history.pop(0)
+
+            # Broadcast to WebSocket clients
+            broadcast_message(
+                {
+                    "type": "image",
+                    "id": image_id,
+                    "url": url,
+                    "caption": caption,
+                    "mime": mime_type,
+                    "timestamp": timestamp,
+                }
+            )
+
+            logger.info(f"[IMAGE] Stored {image_id}: {filename} ({len(image_data)} bytes)")
+            self.send_json(200, {"status": "ok", "id": image_id, "url": url})
+
+        except json.JSONDecodeError as e:
+            self.send_json(400, {"status": "error", "message": f"Invalid JSON: {e}"})
+
+    def handle_image_serve(self):
+        """Handle GET /api/image/<id> - serve a stored image"""
+        image_id = self.path.split("/")[-1]
+
+        if image_id not in image_store:
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "not_found"}).encode())
+            return
+
+        entry = image_store[image_id]
+        self.send_response(200)
+        self.send_header("Content-Type", entry["mime"])
+        self.send_header("Content-Length", str(len(entry["data"])))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "public, max-age=3600")
+        self.end_headers()
+        self.wfile.write(entry["data"])
 
     def serve_viewer(self):
         """Serve the public demo viewer"""

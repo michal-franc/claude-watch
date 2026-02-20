@@ -1,5 +1,6 @@
 """Unit tests for server.py"""
 
+import base64
 import json
 import os
 import sys
@@ -1052,3 +1053,240 @@ class TestCheckHooksConfigured:
         captured = capsys.readouterr()
         assert "WARNING" in captured.out
         assert "hooks not configured" in captured.out.lower()
+
+
+class TestImageUpload:
+    """Tests for image upload and serving endpoints"""
+
+    def setup_method(self):
+        """Reset image store and chat history before each test"""
+        server.image_store.clear()
+        server.chat_history.clear()
+
+    def teardown_method(self):
+        """Clean up after each test"""
+        server.image_store.clear()
+        server.chat_history.clear()
+
+    @patch.object(server.DictationHandler, "__init__", lambda x, *args: None)
+    @patch("server.broadcast_message")
+    def test_image_upload_stores_and_broadcasts(self, mock_broadcast):
+        """POST /api/image with valid base64 should store image and broadcast"""
+        png_data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+        b64_data = base64.b64encode(png_data).decode()
+        body = json.dumps({"file": b64_data, "filename": "test.png", "caption": "Screenshot"}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = "/api/image"
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_image_upload(len(body))
+
+        handler.send_response.assert_called_with(200)
+        response = json.loads(handler.wfile.getvalue())
+        assert response["status"] == "ok"
+        assert "id" in response
+        assert response["url"].startswith("/api/image/")
+
+        # Verify stored
+        image_id = response["id"]
+        assert image_id in server.image_store
+        assert server.image_store[image_id]["mime"] == "image/png"
+        assert server.image_store[image_id]["data"] == png_data
+        assert server.image_store[image_id]["caption"] == "Screenshot"
+
+        # Verify broadcast called with image message
+        mock_broadcast.assert_called_once()
+        broadcast_data = mock_broadcast.call_args[0][0]
+        assert broadcast_data["type"] == "image"
+        assert broadcast_data["id"] == image_id
+        assert broadcast_data["caption"] == "Screenshot"
+
+        # Verify chat history entry
+        assert len(server.chat_history) == 1
+        assert server.chat_history[0]["role"] == "claude"
+        assert server.chat_history[0]["image_url"] == response["url"]
+
+    @patch.object(server.DictationHandler, "__init__", lambda x, *args: None)
+    def test_image_upload_no_file(self):
+        """POST /api/image without file field should return 400"""
+        body = json.dumps({"filename": "test.png"}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = "/api/image"
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_image_upload(len(body))
+
+        handler.send_response.assert_called_with(400)
+        response = json.loads(handler.wfile.getvalue())
+        assert "Missing" in response["message"]
+
+    @patch.object(server.DictationHandler, "__init__", lambda x, *args: None)
+    def test_image_upload_invalid_base64(self):
+        """POST /api/image with invalid base64 should return 400"""
+        body = json.dumps({"file": "not-valid-base64!!!", "filename": "test.png"}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = "/api/image"
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_image_upload(len(body))
+
+        handler.send_response.assert_called_with(400)
+        response = json.loads(handler.wfile.getvalue())
+        assert "base64" in response["message"].lower()
+
+    @patch.object(server.DictationHandler, "__init__", lambda x, *args: None)
+    @patch("server.broadcast_message")
+    def test_image_serve_returns_image(self, mock_broadcast):
+        """GET /api/image/<id> should return stored image bytes"""
+        # Store an image directly
+        server.image_store["test-img"] = {
+            "data": b"\x89PNG fake image data",
+            "mime": "image/png",
+            "caption": "test",
+            "timestamp": "2026-01-01T00:00:00Z",
+        }
+
+        handler = server.DictationHandler()
+        handler.path = "/api/image/test-img"
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_image_serve()
+
+        handler.send_response.assert_called_with(200)
+        # Check Content-Type header
+        header_calls = {call[0][0]: call[0][1] for call in handler.send_header.call_args_list}
+        assert header_calls["Content-Type"] == "image/png"
+
+        # Check response body is the image data
+        assert handler.wfile.getvalue() == b"\x89PNG fake image data"
+
+    @patch.object(server.DictationHandler, "__init__", lambda x, *args: None)
+    def test_image_serve_not_found(self):
+        """GET /api/image/<id> with unknown ID should return 404"""
+        handler = server.DictationHandler()
+        handler.path = "/api/image/nonexistent"
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_image_serve()
+
+        handler.send_response.assert_called_with(404)
+
+    @patch.object(server.DictationHandler, "__init__", lambda x, *args: None)
+    @patch("server.broadcast_message")
+    def test_image_store_eviction(self, mock_broadcast):
+        """Storing more than MAX_IMAGES should evict oldest entries"""
+        # Fill store to max
+        for i in range(server.MAX_IMAGES):
+            server.image_store[f"img-{i}"] = {
+                "data": b"x",
+                "mime": "image/png",
+                "caption": "",
+                "timestamp": f"2026-01-01T00:00:{i:02d}Z",
+            }
+
+        assert len(server.image_store) == server.MAX_IMAGES
+        assert "img-0" in server.image_store
+
+        # Upload one more via the handler
+        b64_data = base64.b64encode(b"new image").decode()
+        body = json.dumps({"file": b64_data, "filename": "new.png"}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = "/api/image"
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_image_upload(len(body))
+
+        # Should still be at MAX_IMAGES (oldest evicted)
+        assert len(server.image_store) == server.MAX_IMAGES
+        assert "img-0" not in server.image_store
+
+    @patch.object(server.DictationHandler, "__init__", lambda x, *args: None)
+    @patch("server.broadcast_message")
+    def test_image_upload_html_mime_in_broadcast_and_history(self, mock_broadcast):
+        """POST /api/image with HTML file should include text/html MIME in broadcast and chat history"""
+        html_data = b"<html><body><h1>Hello D3</h1></body></html>"
+        b64_data = base64.b64encode(html_data).decode()
+        body = json.dumps({"file": b64_data, "filename": "chart.html", "caption": "D3 chart"}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = "/api/image"
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_image_upload(len(body))
+
+        handler.send_response.assert_called_with(200)
+
+        # Verify broadcast includes mime
+        mock_broadcast.assert_called_once()
+        broadcast_data = mock_broadcast.call_args[0][0]
+        assert broadcast_data["type"] == "image"
+        assert broadcast_data["mime"] == "text/html"
+
+        # Verify chat history includes mime
+        assert len(server.chat_history) == 1
+        assert server.chat_history[0]["mime"] == "text/html"
+
+        # Verify store has correct mime
+        image_id = json.loads(handler.wfile.getvalue())["id"]
+        assert server.image_store[image_id]["mime"] == "text/html"
+
+    @patch.object(server.DictationHandler, "__init__", lambda x, *args: None)
+    @patch("server.broadcast_message")
+    def test_image_upload_svg_mime_in_broadcast(self, mock_broadcast):
+        """POST /api/image with SVG should include image/svg+xml MIME in broadcast"""
+        svg_data = b'<svg xmlns="http://www.w3.org/2000/svg"><circle r="50"/></svg>'
+        b64_data = base64.b64encode(svg_data).decode()
+        body = json.dumps({"file": b64_data, "filename": "diagram.svg"}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = "/api/image"
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_image_upload(len(body))
+
+        handler.send_response.assert_called_with(200)
+
+        # Verify broadcast includes svg+xml mime
+        mock_broadcast.assert_called_once()
+        broadcast_data = mock_broadcast.call_args[0][0]
+        assert broadcast_data["mime"] == "image/svg+xml"

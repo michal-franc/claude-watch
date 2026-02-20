@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Usage: toadie-show <file-path> [caption]
-# Sends an image to the Claude Watch server for display in clients.
-#
-# Note: Large files (>100KB) can fail with "Argument list too long" because
-# the base64 string is passed via jq command-line args. Workaround: reduce
-# image size before sending (e.g. use JPEG with lower quality/resolution).
+# Sends a file to the Claude Watch server for display in clients.
+# Supports images (png, jpg, svg, ...) and HTML files (D3.js visualizations, etc).
+# MIME type is auto-detected from the filename extension.
+# HTML files render in an iframe (viewer) or WebView (phone app).
 set -euo pipefail
 
 SERVER_URL="${TOADIE_SERVER_URL:-http://localhost:5566}"
 
 if [ $# -lt 1 ]; then
     echo "Usage: toadie-show <file-path> [caption]" >&2
+    echo "  Supports images (png, jpg, svg) and HTML files (D3.js, etc)" >&2
     exit 1
 fi
 
@@ -23,18 +23,22 @@ if [ ! -f "$FILE_PATH" ]; then
 fi
 
 FILENAME=$(basename "$FILE_PATH")
-FILE_B64=$(base64 -w0 "$FILE_PATH")
+B64_FILE=$(mktemp)
+base64 -w0 "$FILE_PATH" > "$B64_FILE"
 
-BODY=$(jq -n \
-    --arg file "$FILE_B64" \
+BODY_FILE=$(mktemp)
+jq -n \
+    --rawfile file "$B64_FILE" \
     --arg filename "$FILENAME" \
     --arg caption "$CAPTION" \
-    '{file: $file, filename: $filename, caption: $caption}')
+    '{file: $file, filename: $filename, caption: $caption}' > "$BODY_FILE"
+rm -f "$B64_FILE"
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
     -H "Content-Type: application/json" \
-    -d "$BODY" \
+    -d @"$BODY_FILE" \
     "${SERVER_URL}/api/image")
+rm -f "$BODY_FILE"
 
 HTTP_CODE=$(echo "$RESPONSE" | tail -1)
 BODY_RESP=$(echo "$RESPONSE" | sed '$d')
