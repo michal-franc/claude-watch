@@ -270,6 +270,10 @@ class ClaudeTmuxSession:
                 if force_refresh:
                     # run() already updated self.session_id — just use it
                     latest = self.session_id
+                elif self.session_id is None:
+                    # No session yet — wait for run() to start one.
+                    # Don't auto-discover old files or we'll replay stale history.
+                    latest = None
                 elif not session_file_exists(self.workdir, self.session_id):
                     # Current file disappeared — fall back
                     latest = find_latest_session(self.workdir)

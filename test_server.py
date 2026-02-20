@@ -1229,3 +1229,64 @@ class TestImageUpload:
         # Should still be at MAX_IMAGES (oldest evicted)
         assert len(server.image_store) == server.MAX_IMAGES
         assert "img-0" not in server.image_store
+
+    @patch.object(server.DictationHandler, "__init__", lambda x, *args: None)
+    @patch("server.broadcast_message")
+    def test_image_upload_html_mime_in_broadcast_and_history(self, mock_broadcast):
+        """POST /api/image with HTML file should include text/html MIME in broadcast and chat history"""
+        html_data = b"<html><body><h1>Hello D3</h1></body></html>"
+        b64_data = base64.b64encode(html_data).decode()
+        body = json.dumps({"file": b64_data, "filename": "chart.html", "caption": "D3 chart"}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = "/api/image"
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_image_upload(len(body))
+
+        handler.send_response.assert_called_with(200)
+
+        # Verify broadcast includes mime
+        mock_broadcast.assert_called_once()
+        broadcast_data = mock_broadcast.call_args[0][0]
+        assert broadcast_data["type"] == "image"
+        assert broadcast_data["mime"] == "text/html"
+
+        # Verify chat history includes mime
+        assert len(server.chat_history) == 1
+        assert server.chat_history[0]["mime"] == "text/html"
+
+        # Verify store has correct mime
+        image_id = json.loads(handler.wfile.getvalue())["id"]
+        assert server.image_store[image_id]["mime"] == "text/html"
+
+    @patch.object(server.DictationHandler, "__init__", lambda x, *args: None)
+    @patch("server.broadcast_message")
+    def test_image_upload_svg_mime_in_broadcast(self, mock_broadcast):
+        """POST /api/image with SVG should include image/svg+xml MIME in broadcast"""
+        svg_data = b'<svg xmlns="http://www.w3.org/2000/svg"><circle r="50"/></svg>'
+        b64_data = base64.b64encode(svg_data).decode()
+        body = json.dumps({"file": b64_data, "filename": "diagram.svg"}).encode()
+
+        handler = server.DictationHandler()
+        handler.path = "/api/image"
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        handler.handle_image_upload(len(body))
+
+        handler.send_response.assert_called_with(200)
+
+        # Verify broadcast includes svg+xml mime
+        mock_broadcast.assert_called_once()
+        broadcast_data = mock_broadcast.call_args[0][0]
+        assert broadcast_data["mime"] == "image/svg+xml"

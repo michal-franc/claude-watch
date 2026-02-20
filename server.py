@@ -1419,6 +1419,7 @@ class DictationHandler(BaseHTTPRequestHandler):
                 "role": "claude",
                 "content": caption if caption else "[image]",
                 "image_url": url,
+                "mime": mime_type,
                 "timestamp": timestamp,
             }
             chat_history.append(chat_message)
@@ -1432,6 +1433,7 @@ class DictationHandler(BaseHTTPRequestHandler):
                     "id": image_id,
                     "url": url,
                     "caption": caption,
+                    "mime": mime_type,
                     "timestamp": timestamp,
                 }
             )
