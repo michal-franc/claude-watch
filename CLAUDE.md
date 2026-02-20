@@ -61,6 +61,15 @@ Always add unit tests for new features and bug fixes. Write tests that verify **
 - **Minimum 75% coverage on JaCoCo-measurable code** — pure logic, data classes, network clients, services. Run `make coverage` before pushing. If below 75%, extract logic into testable helpers (see `PermissionPromptHelper` pattern).
 - **Robolectric-tested code is exempt from the 75% metric** — JaCoCo can't measure Robolectric coverage due to classloader conflicts. UI code (Activities, Views, Adapters) must still have Robolectric tests but won't show in JaCoCo reports. Report Robolectric test count separately in PR descriptions.
 
+## toadie-show
+
+Send files to connected clients. Script lives on `feature/image-sharing` branch:
+```bash
+git show feature/image-sharing:scripts/toadie-show > /tmp/toadie-show && chmod +x /tmp/toadie-show
+/tmp/toadie-show /path/to/file "Caption"
+```
+**Large file workaround**: Files >100KB fail with "Argument list too long" (base64 passed via jq args). Compress images to JPEG with lower quality/resolution before sending.
+
 ## Don't
 
 - Don't push directly to master — always use a feature branch + PR
