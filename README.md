@@ -1,3 +1,5 @@
+> **WARNING: This is a personal software project. DON'T USE IT.** It was 100% AI-generated and has bugs and problems that only the creator can deal with. This will ultimately be fixed, but BE WARNED.
+
 # Toadie Personal Assistant
 
 Voice-to-Claude pipeline: Speak into your Galaxy Watch or phone (or just say "hey toadie"), Claude Code executes your command, and responses come back as text or TTS audio. Includes permission prompts for dangerous operations.
